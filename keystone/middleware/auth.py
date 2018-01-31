@@ -173,6 +173,7 @@ class AuthContextMiddleware(auth_token.BaseAuthProtocol):
         request.environ[context.REQUEST_CONTEXT_ENV] = request_context
 
         if authorization.AUTH_CONTEXT_ENV in request.environ:
+            #先检查看AUTH_CONTEXT_ENV是否已设置，如果设置了就不用再设置了
             msg = ('Auth context already exists in the request '
                    'environment; it will be used for authorization '
                    'instead of creating a new one.')
@@ -185,6 +186,7 @@ class AuthContextMiddleware(auth_token.BaseAuthProtocol):
         # certificate is effectively disabled if no trusted issuers are
         # provided.
 
+        #设置AUTH_CONTEXT_ENV,填充request_context
         if request.environ.get(wsgi.CONTEXT_ENV, {}).get('is_admin', False):
             request_context.is_admin = True
             auth_context = {}
