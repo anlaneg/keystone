@@ -13,6 +13,7 @@
 
 import uuid
 
+from keystone.application_credential import schema as app_cred_schema
 from keystone.assignment import schema as assignment_schema
 from keystone.catalog import schema as catalog_schema
 from keystone.common import validation
@@ -23,6 +24,7 @@ from keystone import exception
 from keystone.federation import schema as federation_schema
 from keystone.identity.backends import resource_options as ro
 from keystone.identity import schema as identity_schema
+from keystone.limit import schema as limit_schema
 from keystone.oauth1 import schema as oauth1_schema
 from keystone.policy import schema as policy_schema
 from keystone.resource import schema as resource_schema
@@ -1483,7 +1485,10 @@ class EndpointGroupValidationTestCase(unit.BaseTestCase):
 class TrustValidationTestCase(unit.BaseTestCase):
     """Test for V3 Trust API validation."""
 
-    _valid_roles = ['member', uuid.uuid4().hex, str(uuid.uuid4())]
+    _valid_roles = [{'name': 'member'},
+                    {'id': uuid.uuid4().hex},
+                    {'id': str(uuid.uuid4())},
+                    {'name': '_member_'}]
     _invalid_roles = [False, True, 123, None]
 
     def setUp(self):
@@ -1505,7 +1510,8 @@ class TrustValidationTestCase(unit.BaseTestCase):
                                'trustee_user_id': uuid.uuid4().hex,
                                'impersonation': False,
                                'project_id': uuid.uuid4().hex,
-                               'roles': [uuid.uuid4().hex, uuid.uuid4().hex],
+                               'roles': [{'id': uuid.uuid4().hex},
+                                         {'id': uuid.uuid4().hex}],
                                'expires_at': 'some timestamp',
                                'remaining_uses': 2}
         self.create_trust_validator.validate(request_to_validate)
@@ -1540,7 +1546,8 @@ class TrustValidationTestCase(unit.BaseTestCase):
                                'trustee_user_id': uuid.uuid4().hex,
                                'impersonation': False,
                                'project_id': uuid.uuid4().hex,
-                               'roles': [uuid.uuid4().hex, uuid.uuid4().hex],
+                               'roles': [{'id': uuid.uuid4().hex},
+                                         {'id': uuid.uuid4().hex}],
                                'expires_at': 'some timestamp',
                                'remaining_uses': 2,
                                'extra': 'something extra!'}
@@ -2314,8 +2321,11 @@ class OAuth1ValidationTestCase(unit.BaseTestCase):
 
         create = oauth1_schema.consumer_create
         update = oauth1_schema.consumer_update
+        authorize = oauth1_schema.request_token_authorize
         self.create_consumer_validator = validators.SchemaValidator(create)
         self.update_consumer_validator = validators.SchemaValidator(update)
+        self.authorize_request_token_validator = validators.SchemaValidator(
+            authorize)
 
     def test_validate_consumer_request_succeeds(self):
         """Test that we validate a consumer request successfully."""
@@ -2357,6 +2367,53 @@ class OAuth1ValidationTestCase(unit.BaseTestCase):
         request_to_validate = {'description': None}
         self.create_consumer_validator.validate(request_to_validate)
         self.update_consumer_validator.validate(request_to_validate)
+
+    def test_validate_authorize_request_token(self):
+        request_to_validate = [
+            {
+                "id": "711aa6371a6343a9a43e8a310fbe4a6f"
+            },
+            {
+                "name": "test_role"
+            }
+        ]
+
+        self.authorize_request_token_validator.validate(request_to_validate)
+
+    def test_validate_authorize_request_token_with_additional_properties(self):
+        request_to_validate = [
+            {
+                "id": "711aa6371a6343a9a43e8a310fbe4a6f",
+                "fake_key": "fake_value"
+            }
+        ]
+
+        self.assertRaises(exception.SchemaValidationError,
+                          self.authorize_request_token_validator.validate,
+                          request_to_validate)
+
+    def test_validate_authorize_request_token_with_id_and_name(self):
+        request_to_validate = [
+            {
+                "id": "711aa6371a6343a9a43e8a310fbe4a6f",
+                "name": "admin"
+            }
+        ]
+
+        self.assertRaises(exception.SchemaValidationError,
+                          self.authorize_request_token_validator.validate,
+                          request_to_validate)
+
+    def test_validate_authorize_request_token_with_non_id_or_name(self):
+        request_to_validate = [
+            {
+                "fake_key": "fake_value"
+            }
+        ]
+
+        self.assertRaises(exception.SchemaValidationError,
+                          self.authorize_request_token_validator.validate,
+                          request_to_validate)
 
 
 class PasswordValidationTestCase(unit.TestCase):
@@ -2400,3 +2457,300 @@ class PasswordValidationTestCase(unit.TestCase):
         self.config_fixture.config(group='security_compliance',
                                    password_regex='[\S]+')
         validators.validate_password(password)
+
+
+class LimitValidationTestCase(unit.BaseTestCase):
+    """Test for V3 Limits API validation."""
+
+    def setUp(self):
+        super(LimitValidationTestCase, self).setUp()
+
+        create_registered_limits = limit_schema.registered_limit_create
+        update_registered_limits = limit_schema.registered_limit_update
+        create_limits = limit_schema.limit_create
+        update_limits = limit_schema.limit_update
+
+        self.create_registered_limits_validator = validators.SchemaValidator(
+            create_registered_limits)
+        self.update_registered_limits_validator = validators.SchemaValidator(
+            update_registered_limits)
+        self.create_limits_validator = validators.SchemaValidator(
+            create_limits)
+        self.update_limits_validator = validators.SchemaValidator(
+            update_limits)
+
+    def test_validate_registered_limit_create_request_succeeds(self):
+        request_to_validate = [{'service_id': uuid.uuid4().hex,
+                                'region_id': 'RegionOne',
+                                'resource_name': 'volume',
+                                'default_limit': 10}]
+        self.create_registered_limits_validator.validate(request_to_validate)
+
+    def test_validate_registered_limit_create_request_without_region(self):
+        request_to_validate = [{'service_id': uuid.uuid4().hex,
+                                'resource_name': 'volume',
+                                'default_limit': 10}]
+        self.create_registered_limits_validator.validate(request_to_validate)
+
+    def test_validate_registered_limit_update_request_without_region(self):
+        request_to_validate = [{'id': uuid.uuid4().hex,
+                                'service_id': uuid.uuid4().hex,
+                                'resource_name': 'volume',
+                                'default_limit': 10}]
+        self.update_registered_limits_validator.validate(request_to_validate)
+
+    def test_validate_registered_limit_request_with_no_parameters(self):
+        request_to_validate = []
+        # At least one property should be given.
+        self.assertRaises(exception.SchemaValidationError,
+                          self.create_registered_limits_validator.validate,
+                          request_to_validate)
+        self.assertRaises(exception.SchemaValidationError,
+                          self.update_registered_limits_validator.validate,
+                          request_to_validate)
+
+    def test_validate_registered_limit_create_request_with_invalid_input(self):
+        _INVALID_FORMATS = [{'service_id': 'fake_id'},
+                            {'region_id': 123},
+                            {'resource_name': 123},
+                            {'default_limit': 'not_int'}]
+        for invalid_desc in _INVALID_FORMATS:
+            request_to_validate = [{'service_id': uuid.uuid4().hex,
+                                    'region_id': 'RegionOne',
+                                    'resource_name': 'volume',
+                                    'default_limit': 10}]
+            request_to_validate[0].update(invalid_desc)
+
+            self.assertRaises(exception.SchemaValidationError,
+                              self.create_registered_limits_validator.validate,
+                              request_to_validate)
+
+    def test_validate_registered_limit_update_request_with_invalid_input(self):
+        _INVALID_FORMATS = [{'service_id': 'fake_id'},
+                            {'region_id': 123},
+                            {'resource_name': 123},
+                            {'default_limit': 'not_int'}]
+        for invalid_desc in _INVALID_FORMATS:
+            request_to_validate = [{'id': uuid.uuid4().hex,
+                                    'service_id': uuid.uuid4().hex,
+                                    'region_id': 'RegionOne',
+                                    'resource_name': 'volume',
+                                    'default_limit': 10}]
+            request_to_validate[0].update(invalid_desc)
+
+            self.assertRaises(exception.SchemaValidationError,
+                              self.update_registered_limits_validator.validate,
+                              request_to_validate)
+
+    def test_validate_registered_limit_create_request_with_addition(self):
+        request_to_validate = [{'service_id': uuid.uuid4().hex,
+                                'region_id': 'RegionOne',
+                                'resource_name': 'volume',
+                                'default_limit': 10,
+                                'more_key': 'more_value'}]
+        self.assertRaises(exception.SchemaValidationError,
+                          self.create_registered_limits_validator.validate,
+                          request_to_validate)
+
+    def test_validate_registered_limit_update_request_with_addition(self):
+        request_to_validate = [{'id': uuid.uuid4().hex,
+                                'service_id': uuid.uuid4().hex,
+                                'region_id': 'RegionOne',
+                                'resource_name': 'volume',
+                                'default_limit': 10,
+                                'more_key': 'more_value'}]
+        self.assertRaises(exception.SchemaValidationError,
+                          self.update_registered_limits_validator.validate,
+                          request_to_validate)
+
+    def test_validate_registered_limit_create_request_without_required(self):
+        for key in ['service_id', 'resource_name', 'default_limit']:
+            request_to_validate = [{'service_id': uuid.uuid4().hex,
+                                    'region_id': 'RegionOne',
+                                    'resource_name': 'volume',
+                                    'default_limit': 10}]
+            request_to_validate[0].pop(key)
+            self.assertRaises(exception.SchemaValidationError,
+                              self.create_registered_limits_validator.validate,
+                              request_to_validate)
+
+    def test_validate_registered_limit_update_request_without_id(self):
+        request_to_validate = [{'service_id': uuid.uuid4().hex,
+                                'region_id': 'RegionOne',
+                                'resource_name': 'volume',
+                                'default_limit': 10}]
+        self.assertRaises(exception.SchemaValidationError,
+                          self.update_registered_limits_validator.validate,
+                          request_to_validate)
+
+    def test_validate_limit_create_request_succeeds(self):
+        request_to_validate = [{'project_id': uuid.uuid4().hex,
+                                'service_id': uuid.uuid4().hex,
+                                'region_id': 'RegionOne',
+                                'resource_name': 'volume',
+                                'resource_limit': 10}]
+        self.create_limits_validator.validate(request_to_validate)
+
+    def test_validate_limit_create_request_without_region(self):
+        request_to_validate = [{'project_id': uuid.uuid4().hex,
+                                'service_id': uuid.uuid4().hex,
+                                'resource_name': 'volume',
+                                'resource_limit': 10}]
+        self.create_limits_validator.validate(request_to_validate)
+
+    def test_validate_limit_update_request_succeeds(self):
+        request_to_validate = [{'id': uuid.uuid4().hex,
+                                'resource_limit': 10}]
+        self.update_limits_validator.validate(request_to_validate)
+
+    def test_validate_limit_request_with_no_parameters(self):
+        request_to_validate = []
+        # At least one property should be given.
+        self.assertRaises(exception.SchemaValidationError,
+                          self.create_limits_validator.validate,
+                          request_to_validate)
+        self.assertRaises(exception.SchemaValidationError,
+                          self.update_limits_validator.validate,
+                          request_to_validate)
+
+    def test_validate_limit_create_request_with_invalid_input(self):
+        _INVALID_FORMATS = [{'project_id': 'fake_id'},
+                            {'service_id': 'fake_id'},
+                            {'region_id': 123},
+                            {'resource_name': 123},
+                            {'resource_limit': 'not_int'}]
+        for invalid_desc in _INVALID_FORMATS:
+            request_to_validate = [{'project_id': uuid.uuid4().hex,
+                                    'service_id': uuid.uuid4().hex,
+                                    'region_id': 'RegionOne',
+                                    'resource_name': 'volume',
+                                    'resource_limit': 10}]
+            request_to_validate[0].update(invalid_desc)
+
+            self.assertRaises(exception.SchemaValidationError,
+                              self.create_limits_validator.validate,
+                              request_to_validate)
+
+    def test_validate_limit_update_request_with_invalid_input(self):
+        request_to_validate = [{'id': uuid.uuid4().hex,
+                                'resource_limit': 'not_int'}]
+
+        self.assertRaises(exception.SchemaValidationError,
+                          self.update_limits_validator.validate,
+                          request_to_validate)
+
+    def test_validate_limit_create_request_with_addition_input_fails(self):
+        request_to_validate = [{'service_id': uuid.uuid4().hex,
+                                'region_id': 'RegionOne',
+                                'resource_name': 'volume',
+                                'resource_limit': 10,
+                                'more_key': 'more_value'}]
+        self.assertRaises(exception.SchemaValidationError,
+                          self.create_limits_validator.validate,
+                          request_to_validate)
+
+    def test_validate_limit_update_request_with_addition_input_fails(self):
+        request_to_validate = [{'id': uuid.uuid4().hex,
+                                'resource_limit': 10,
+                                'more_key': 'more_value'}]
+        self.assertRaises(exception.SchemaValidationError,
+                          self.update_limits_validator.validate,
+                          request_to_validate)
+
+    def test_validate_limit_create_request_without_required_fails(self):
+        for key in ['service_id', 'resource_name', 'resource_limit']:
+            request_to_validate = [{'service_id': uuid.uuid4().hex,
+                                    'region_id': 'RegionOne',
+                                    'resource_name': 'volume',
+                                    'resource_limit': 10}]
+            request_to_validate[0].pop(key)
+            self.assertRaises(exception.SchemaValidationError,
+                              self.create_limits_validator.validate,
+                              request_to_validate)
+
+    def test_validate_limit_update_request_without_id_fails(self):
+        request_to_validate = [{'resource_limit': 10}]
+        self.assertRaises(exception.SchemaValidationError,
+                          self.update_limits_validator.validate,
+                          request_to_validate)
+
+
+class ApplicationCredentialValidatorTestCase(unit.TestCase):
+    _valid_roles = [{'name': 'member'},
+                    {'id': uuid.uuid4().hex},
+                    {'id': str(uuid.uuid4())},
+                    {'name': '_member_'}]
+    _invalid_roles = [True, 123, None, {'badkey': 'badval'}]
+
+    def setUp(self):
+        super(ApplicationCredentialValidatorTestCase, self).setUp()
+
+        create = app_cred_schema.application_credential_create
+        self.create_app_cred_validator = validators.SchemaValidator(create)
+
+    def test_validate_app_cred_request(self):
+        request_to_validate = {
+            'name': 'myappcred',
+            'description': 'My App Cred',
+            'roles': [{'name': 'member'}],
+            'expires_at': 'tomorrow'
+        }
+        self.create_app_cred_validator.validate(request_to_validate)
+
+    def test_validate_app_cred_request_without_name_fails(self):
+        request_to_validate = {
+            'description': 'My App Cred',
+            'roles': [{'name': 'member'}],
+            'expires_at': 'tomorrow'
+        }
+        self.assertRaises(exception.SchemaValidationError,
+                          self.create_app_cred_validator.validate,
+                          request_to_validate)
+
+    def test_validate_app_cred_with_invalid_expires_at_fails(self):
+        request_to_validate = {
+            'name': 'myappcred',
+            'description': 'My App Cred',
+            'roles': [{'name': 'member'}],
+            'expires_at': 3
+        }
+        self.assertRaises(exception.SchemaValidationError,
+                          self.create_app_cred_validator.validate,
+                          request_to_validate)
+
+    def test_validate_app_cred_with_null_expires_at_succeeds(self):
+        request_to_validate = {
+            'name': 'myappcred',
+            'description': 'My App Cred',
+            'roles': [{'name': 'member'}],
+        }
+        self.create_app_cred_validator.validate(request_to_validate)
+
+    def test_validate_app_cred_with_unrestricted_flag_succeeds(self):
+        request_to_validate = {
+            'name': 'myappcred',
+            'description': 'My App Cred',
+            'roles': [{'name': 'member'}],
+            'unrestricted': True
+        }
+        self.create_app_cred_validator.validate(request_to_validate)
+
+    def test_validate_app_cred_with_secret_succeeds(self):
+        request_to_validate = {
+            'name': 'myappcred',
+            'description': 'My App Cred',
+            'roles': [{'name': 'member'}],
+            'secret': 'secretsecretsecretsecret'
+        }
+        self.create_app_cred_validator.validate(request_to_validate)
+
+    def test_validate_app_cred_invalid_roles_fails(self):
+        for role in self._invalid_roles:
+            request_to_validate = {
+                'name': 'myappcred',
+                'description': 'My App Cred',
+                'roles': [role]
+            }
+            self.assertRaises(exception.SchemaValidationError,
+                              self.create_app_cred_validator.validate,
+                              request_to_validate)

@@ -28,6 +28,18 @@
     "identity:update_endpoint": "rule:cloud_admin",
     "identity:delete_endpoint": "rule:cloud_admin",
 
+    "identity:get_registered_limit": "",
+    "identity:list_registered_limits": "",
+    "identity:create_registered_limits": "rule:admin_required",
+    "identity:update_registered_limits": "rule:admin_required",
+    "identity:delete_registered_limit": "rule:admin_required",
+
+    "identity:get_limit": "",
+    "identity:list_limits": "",
+    "identity:create_limits": "rule:admin_required",
+    "identity:update_limits": "rule:admin_required",
+    "identity:delete_limit": "rule:admin_required",
+
     "identity:get_domain": "rule:cloud_admin or rule:admin_and_matching_domain_id or token.project.domain.id:%(target.domain.id)s",
     "identity:list_domains": "rule:cloud_admin",
     "identity:create_domain": "rule:cloud_admin",
@@ -109,6 +121,16 @@
     "identity:list_role_inference_rules": "rule:cloud_admin",
     "identity:check_implied_role": "rule:cloud_admin or rule:admin_and_matching_prior_role_domain_id",
 
+    "identity:list_system_grants_for_user": "rule:admin_required",
+    "identity:check_system_grant_for_user": "rule:admin_required",
+    "identity:create_system_grant_for_user": "rule:admin_required",
+    "identity:revoke_system_grant_for_user": "rule:admin_required",
+
+    "identity:list_system_grants_for_group": "rule:admin_required",
+    "identity:check_system_grant_for_group": "rule:admin_required",
+    "identity:create_system_grant_for_group": "rule:admin_required",
+    "identity:revoke_system_grant_for_group": "rule:admin_required",
+
     "identity:check_grant": "rule:cloud_admin or rule:domain_admin_for_grants or rule:project_admin_for_grants",
     "identity:list_grants": "rule:cloud_admin or rule:domain_admin_for_list_grants or rule:project_admin_for_list_grants",
     "identity:create_grant": "rule:cloud_admin or rule:domain_admin_for_grants or rule:project_admin_for_grants",
@@ -122,7 +144,7 @@
     "project_admin_for_domain_role_grants": "rule:admin_required and project_domain_id:%(target.role.domain_id)s and project_id:%(project_id)s",
     "domain_admin_for_list_grants": "rule:admin_required and rule:domain_admin_grant_match",
     "project_admin_for_list_grants": "rule:admin_required and project_id:%(project_id)s",
- 
+
     "admin_on_domain_filter": "rule:admin_required and domain_id:%(scope.domain.id)s",
     "admin_on_project_filter": "rule:admin_required and project_id:%(scope.project.id)s",
     "admin_on_domain_of_project_filter": "rule:admin_required and domain_id:%(target.project.domain_id)s",
@@ -205,6 +227,7 @@
     "identity:get_auth_catalog": "",
     "identity:get_auth_projects": "",
     "identity:get_auth_domains": "",
+    "identity:get_auth_system": "",
 
     "identity:list_projects_for_user": "",
     "identity:list_domains_for_user": "",
@@ -228,5 +251,10 @@
     "identity:get_security_compliance_domain_config": "",
     "identity:update_domain_config": "rule:cloud_admin",
     "identity:delete_domain_config": "rule:cloud_admin",
-    "identity:get_domain_config_default": "rule:cloud_admin"
+    "identity:get_domain_config_default": "rule:cloud_admin",
+
+    "identity:get_application_credential": "rule:admin_or_owner",
+    "identity:list_application_credentials": "rule:admin_or_owner",
+    "identity:create_application_credential": "rule:admin_or_owner",
+    "identity:delete_application_credential": "rule:admin_or_owner"
 }

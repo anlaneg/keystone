@@ -52,6 +52,12 @@ implies_role_id:
   in: path
   required: true
   type: string
+limit_id_path:
+  description: |
+    The limit ID.
+  in: path
+  required: true
+  type: string
 option:
   description: |
     The option name. For the ``ldap`` group, a valid
@@ -81,6 +87,24 @@ project_id_path:
 region_id_path:
   description: |
     The region ID.
+  in: path
+  required: true
+  type: string
+registered_limit_id_path:
+  description: |
+    The registered limit ID.
+  in: path
+  required: true
+  type: string
+request_application_credential_id_path_required:
+  description: |
+    The ID of the application credential.
+  in: path
+  required: true
+  type: string
+request_application_credential_user_id_path_required:
+  description: |
+    The ID of the user who owns the application credential.
   in: path
   required: true
   type: string
@@ -313,6 +337,18 @@ protocol_id_query:
   in: query
   required: false
   type: string
+region_id_query:
+  description: |
+    Filters the response by a region ID.
+  in: query
+  required: false
+  type: string
+resource_name_query:
+  description: |
+    Filters the response by a specified resource name.
+  in: query
+  required: false
+  type: string
 role_id_query:
   description: |
     Filters the response by a role ID.
@@ -342,6 +378,12 @@ scope_os_inherit_inherited_to:
 scope_project_id_query:
   description: |
     Filters the response by a project ID.
+  in: query
+  required: false
+  type: string
+scope_system_query:
+  description: |
+    Filters the response by system assignments.
   in: query
   required: false
   type: string
@@ -412,6 +454,13 @@ auth:
   in: body
   required: true
   type: object
+auth_application_credential_restricted_body:
+  description: |
+    Whether the application credential is permitted to be used for creating and
+    deleting additional application credentials and trusts.
+  in: body
+  required: true
+  type: object
 auth_domain:
   description: |
     Specify either ``id`` or ``name`` to uniquely
@@ -433,6 +482,13 @@ auth_methods:
     methods that were used to authenticate the user in exchange for a
     token. The client is responsible for determining the total number
     of authentication factors.
+  in: body
+  required: true
+  type: array
+auth_methods_application_credential:
+  description: |
+    The authentication method. To authenticate with an application credential,
+    specify ``application_credential``.
   in: body
   required: true
   type: array
@@ -538,17 +594,23 @@ credentials_links:
   in: body
   required: true
   type: object
+default_limit:
+  description: |
+    The default limit for the registered limit.
+  in: body
+  required: true
+  type: integer
 default_project_id_request_body:
   description: |
     The ID of the default project for the user.
-    Setting this attribute does not grant any actual authorization on
-    the project, and is merely provided for convenience. Therefore,
-    the referenced project does not need to exist within the user
-    domain.  (Since v3.1) If the user does not have authorization to
-    their default project, the default project is ignored at token
-    creation.  (Since v3.1) Additionally, if your default project is
-    not valid, a token is issued without an explicit scope of
-    authorization.
+    A user's default project must not be a domain. Setting this
+    attribute does not grant any actual authorization on the project,
+    and is merely provided for convenience. Therefore, the referenced
+    project does not need to exist within the user domain.  (Since v3.1)
+    If the user does not have authorization to their default project,
+    the default project is ignored at token creation.  (Since v3.1)
+    Additionally, if your default project is not valid, a token is
+    issued without an explicit scope of authorization.
   in: body
   required: false
   type: string
@@ -849,12 +911,18 @@ explicit_unscoped_string:
   in: body
   required: false
   type: string
-extras:
+extra_request_body:
   description: |
-    A set of metadata key and value pairs, if any.
+    The extra attributes of a resource.
+    The actual name ``extra`` is not the key name in the request body,
+    but rather a collection of any attributes that a resource may contain
+    that are not part of the resource's default attributes.
+    Generally these are custom fields that are added to a resource in keystone
+    by operators for their own specific uses,
+    such as ``email`` and ``description`` for users.
   in: body
-  required: true
-  type: object
+  required: false
+  type: string
 group:
   description: |
     A ``group`` object, containing:
@@ -889,7 +957,10 @@ group_domain_id:
   type: string
 group_domain_id_request_body:
   description: |
-    The ID of the domain of the group.
+    The ID of the domain of the group. If the domain ID is not
+    provided in the request, the Identity service will attempt to
+    pull the domain ID from the token used in the request. Note that
+    this requires the use of a domain-scoped token.
   in: body
   required: false
   type: string
@@ -1011,6 +1082,18 @@ issued_at:
   in: body
   required: true
   type: string
+limit_id:
+  description: |
+    The limit ID.
+  in: body
+  required: true
+  type: string
+limits:
+  description: |
+    A list of ``limits`` objects, each containing:
+  in: body
+  required: true
+  type: array
 link_collection:
   description: |
     The link to the collection of resources.
@@ -1262,6 +1345,13 @@ project_parent_id_response_body:
   required: true
   type: string
   min_version: 3.4
+project_tags_request_body:
+  description: |
+    A list of simple strings assigned to a project.
+    Tags can be used to classify projects into groups.
+  in: body
+  required: false
+  type: array
 projects:
   description: |
     A list of ``project`` objects, each containing:
@@ -1275,10 +1365,23 @@ region_id_not_required:
   in: body
   required: false
   type: string
+region_id_request_body:
+  description: |
+    The ID of the region that contains the service endpoint.
+  in: body
+  required: false
+  type: string
 region_id_required:
   description: |
     (Since v3.2) The ID of the region that contains
     the service endpoint.
+  in: body
+  required: true
+  type: string
+region_id_response_body:
+  description: |
+    The ID of the region that contains the service endpoint.
+    The value can be None.
   in: body
   required: true
   type: string
@@ -1294,9 +1397,183 @@ regions_object:
   in: body
   required: true
   type: array
+registered_limit:
+  description: |
+    A ``registered_limit`` objects, containing the following:
+  in: body
+  required: true
+  type: array
+registered_limit_id:
+  description: |
+    The registered limit ID.
+  in: body
+  required: true
+  type: string
+registered_limits:
+  description: |
+    A list of ``registered_limits`` objects, each containing:
+  in: body
+  required: true
+  type: array
+request_application_credential_auth_id_body_not_required:
+  description: |
+    The ID of the application credential used for authentication. If not
+    provided, the application credential must be identified by its name and
+    its owning user.
+  in: body
+  required: false
+  type: string
+request_application_credential_auth_name_body_not_required:
+  description: |
+    The name of the application credential used for authentication. If
+    provided, must be accompanied by a user object.
+  in: body
+  required: false
+  type: string
+request_application_credential_auth_secret_body_required:
+  description: |
+    The secret for authenticating the application credential.
+  in: body
+  required: true
+  type: string
+request_application_credential_body_required:
+  description: |
+    An application credential object.
+  in: body
+  required: true
+  type: object
+request_application_credential_description_body_not_required:
+  description: |
+    A description of the application credential's purpose.
+  in: body
+  required: false
+  type: string
+request_application_credential_expires_at_body_not_required:
+  description: |
+    An optional expiry time for the application credential. If unset, the
+    application credential does not expire.
+  in: body
+  required: false
+  type: string
+request_application_credential_name_body_required:
+  description: |
+    The name of the application credential. Must be unique to a user.
+  in: body
+  required: true
+  type: string
+request_application_credential_roles_body_not_required:
+  description: |
+    An optional list of role objects, identified by ID or name. If not
+    provided, the roles assigned to the application credential will be the
+    same as the roles in the current token.
+  in: body
+  required: false
+  type: array
+request_application_credential_secret_body_not_required:
+  description: |
+    The secret that the application credential will be created with. If not
+    provided, one will be generated.
+  in: body
+  required: false
+  type: string
+request_application_credential_unrestricted_body_not_required:
+  description: |
+    An optional flag to restrict whether the application credential may be
+    used for the creation or destruction of other application credentials or
+    trusts. Defaults to false.
+  in: body
+  required: false
+  type: boolean
+request_application_credential_user_body_not_required:
+  description: |
+    A ``user`` object, required if an application credential is identified by
+    name and not ID.
+  in: body
+  required: false
+  type: object
+resource_limit:
+  description: |
+    The override limit.
+  in: body
+  required: true
+  type: integer
+resource_name:
+  description: |
+    The resource name.
+  in: body
+  required: true
+  type: string
+response_application_credential_body:
+  description: |
+    The application credential object.
+  in: body
+  type: object
+  required: true
+response_application_credential_description_body:
+  description: |
+    A description of the application credential's purpose.
+  in: body
+  type: string
+  required: true
+response_application_credential_expires_at_body:
+  description: |
+    The expiration time of the application credential, if one was specified.
+  in: body
+  type: string
+  required: true
+response_application_credential_id_body:
+  description: |
+    The ID of the application credential.
+  in: body
+  type: string
+  required: true
+response_application_credential_name_body:
+  description: |
+    The name of the application credential.
+  in: body
+  type: string
+  required: true
+response_application_credential_project_id_body:
+  description: |
+    The ID of the project the application credential was created for and that
+    authentication requests using this application credential will be scoped
+    to.
+  in: body
+  type: string
+  required: true
+response_application_credential_roles_body:
+  description: |
+    A list of one or more roles that this application credential has
+    associated with its project. A token using this application credential
+    will have these same roles.
+  in: body
+  type: array
+  required: true
+response_application_credential_secret_body:
+  description: |
+    The secret for the application credential, either generated by the server
+    or provided by the user. This is only ever shown once in the response to a
+    create request. It is not stored nor ever shown again. If the secret is
+    lost, a new application credential must be created.
+  in: body
+  type: string
+  required: true
+response_application_credential_unrestricted_body:
+  description: |
+    A flag indicating whether the application credential may be used for
+    creation or destruction of other application credentials or trusts.
+  in: body
+  type: boolean
+  required: true
 response_body_project_tags_required:
   description: |
     A list of simple strings assigned to a project.
+  in: body
+  required: true
+  type: array
+response_body_system_required:
+  description: |
+    A list of systems to access based on role assignments.
   in: body
   required: true
   type: array
@@ -1363,9 +1640,9 @@ roles:
   type: array
 scope_string:
   description: |
-    The authorization scope, including either a project or
-    a domain (Since v3.4). If both a domain and a project are
-    specified, an HTTP 400 Bad Request will be returned, as a
+    The authorization scope, including the system (Since v3.10), a
+    project, or a domain (Since v3.4). If both a domain and a project
+    are specified, an HTTP ``400 Bad Request`` will be returned, as a
     token cannot be simultaneously scoped to both a project
     and a domain. An ID is sufficient to uniquely identify
     a project but if a project is specified by name, then
@@ -1420,6 +1697,19 @@ service_id:
   in: body
   required: true
   type: string
+service_id_limit:
+  description: |
+    The UUID of the service to which the limit belongs.
+  in: body
+  required: true
+  type: string
+service_id_registered_limit:
+  description: |
+    The UUID of the service to which the registered limit
+    belongs.
+  in: body
+  required: true
+  type: string
 service_links:
   description: |
     The links for the ``service`` resource.
@@ -1453,6 +1743,27 @@ signed:
   in: body
   required: true
   type: string
+system:
+  description: |
+    A ``system`` object.
+  in: body
+  required: false
+  type: object
+system_roles_response_body:
+  description: |
+    A list of ``role`` objects containing ``domain_id``, ``id``, ``links``,
+    and ``name`` attributes.
+  in: body
+  required: true
+  type: array
+system_scope_string:
+  description: |
+    Authorization scope specific to the deployment system (Since v3.10).
+    Specifying a project or domain scope in addition to system scope results
+    in an HTTP ``400 Bad Request``.
+  in: body
+  required: false
+  type: string
 token:
   description: |
     A ``token`` object.
@@ -1473,7 +1784,10 @@ user_domain_id:
   type: string
 user_domain_id_request_body:
   description: |
-    The ID of the domain for the user.
+    The ID of the domain of the user. If the domain ID is not
+    provided in the request, the Identity service will attempt to
+    pull the domain ID from the token used in the request. Note that
+    this requires the use of a domain-scoped token.
   in: body
   required: false
   type: string

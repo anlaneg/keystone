@@ -22,8 +22,6 @@ import oauthlib.common
 from oauthlib import oauth1
 from oslo_log import log
 
-from keystone.common import dependency
-from keystone.common import extension
 from keystone.common import manager
 import keystone.conf
 from keystone import exception
@@ -57,25 +55,6 @@ LOG = log.getLogger(__name__)
 
 def token_generator(*args, **kwargs):
     return uuid.uuid4().hex
-
-
-EXTENSION_DATA = {
-    'name': 'OpenStack OAUTH1 API',
-    'namespace': 'https://docs.openstack.org/identity/api/ext/'
-                 'OS-OAUTH1/v1.0',
-    'alias': 'OS-OAUTH1',
-    'updated': '2013-07-07T12:00:0-00:00',
-    'description': 'OpenStack OAuth 1.0a Delegated Auth Mechanism.',
-    'links': [
-        {
-            'rel': 'describedby',
-            'type': 'text/html',
-            'href': 'https://developer.openstack.org/'
-                    'api-ref-identity-v3-ext.html',
-        }
-    ]}
-extension.register_admin_extension(EXTENSION_DATA['alias'], EXTENSION_DATA)
-extension.register_public_extension(EXTENSION_DATA['alias'], EXTENSION_DATA)
 
 
 def get_oauth_headers(headers):
@@ -123,7 +102,6 @@ def validate_oauth_params(query_string):
         raise exception.ValidationError(message=msg)
 
 
-@dependency.provider('oauth_api')
 class Manager(manager.Manager):
     """Default pivot point for the OAuth1 backend.
 
@@ -133,6 +111,7 @@ class Manager(manager.Manager):
     """
 
     driver_namespace = 'keystone.oauth1'
+    _provides_api = 'oauth_api'
 
     _ACCESS_TOKEN = "OS-OAUTH1:access_token"
     _REQUEST_TOKEN = "OS-OAUTH1:request_token"

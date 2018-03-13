@@ -21,7 +21,7 @@ from keystone.auth import core
 from keystone.auth import schema
 from keystone.common import authorization
 from keystone.common import controller
-from keystone.common import dependency
+from keystone.common import provider_api
 from keystone.common import utils
 from keystone.common import validation
 from keystone.common import wsgi
@@ -35,6 +35,7 @@ from keystone.resource import controllers as resource_controllers
 LOG = log.getLogger(__name__)
 
 CONF = keystone.conf.CONF
+PROVIDERS = provider_api.ProviderAPIs
 
 
 def validate_issue_token_auth(auth=None):
@@ -82,8 +83,6 @@ def validate_issue_token_auth(auth=None):
                 raise exception.SchemaValidationError(detail=msg)
 
 
-@dependency.requires('assignment_api', 'catalog_api', 'identity_api',
-                     'resource_api', 'token_provider_api', 'trust_api')
 class Auth(controller.V3Controller):
 
     # Note(atiwari): From V3 auth controller code we are
@@ -119,7 +118,9 @@ class Auth(controller.V3Controller):
             if auth_context.get('access_token_id'):
                 auth_info.set_scope(None, auth_context['project_id'], None)
             self._check_and_set_default_scoping(auth_info, auth_context)
-            (domain_id, project_id, trust, unscoped) = auth_info.get_scope()
+            (domain_id, project_id, trust, unscoped, system) = (
+                auth_info.get_scope()
+            )
 
             # NOTE(notmorgan): only methods that actually run and succeed will
             # be in the auth_context['method_names'] list. Do not blindly take
@@ -127,6 +128,11 @@ class Auth(controller.V3Controller):
             # sure the set is unique.
             method_names_set = set(auth_context.get('method_names', []))
             method_names = list(method_names_set)
+
+            app_cred_id = None
+            if 'application_credential' in method_names:
+                token_auth = auth_info.auth['identity']
+                app_cred_id = token_auth['application_credential']['id']
 
             # Do MFA Rule Validation for the user
             if not self._mfa_rules_validator.check_auth_methods_against_rules(
@@ -139,15 +145,18 @@ class Auth(controller.V3Controller):
             token_audit_id = auth_context.get('audit_id')
 
             is_domain = auth_context.get('is_domain')
-            (token_id, token_data) = self.token_provider_api.issue_token(
-                auth_context['user_id'], method_names, expires_at, project_id,
-                is_domain, domain_id, auth_context, trust, include_catalog,
+            (token_id, token_data) = PROVIDERS.token_provider_api.issue_token(
+                auth_context['user_id'], method_names, expires_at=expires_at,
+                system=system, project_id=project_id,
+                is_domain=is_domain, domain_id=domain_id,
+                auth_context=auth_context, trust=trust,
+                app_cred_id=app_cred_id, include_catalog=include_catalog,
                 parent_audit_id=token_audit_id)
 
             # NOTE(wanghong): We consume a trust use only when we are using
             # trusts and have successfully issued a token.
             if trust:
-                self.trust_api.consume_use(trust['id'])
+                PROVIDERS.trust_api.consume_use(trust['id'])
 
             return render_token_data_response(token_id, token_data,
                                               created=True)
@@ -156,10 +165,12 @@ class Auth(controller.V3Controller):
             raise exception.Unauthorized(e)
 
     def _check_and_set_default_scoping(self, auth_info, auth_context):
-        (domain_id, project_id, trust, unscoped) = auth_info.get_scope()
+        (domain_id, project_id, trust, unscoped, system) = (
+            auth_info.get_scope()
+        )
         if trust:
             project_id = trust['project_id']
-        if domain_id or project_id or trust:
+        if system or domain_id or project_id or trust:
             # scope is specified
             return
 
@@ -173,7 +184,7 @@ class Auth(controller.V3Controller):
 
         # fill in default_project_id if it is available
         try:
-            user_ref = self.identity_api.get_user(auth_context['user_id'])
+            user_ref = PROVIDERS.identity_api.get_user(auth_context['user_id'])
         except exception.UserNotFound as e:
             LOG.warning(six.text_type(e))
             raise exception.Unauthorized(e)
@@ -185,13 +196,13 @@ class Auth(controller.V3Controller):
 
         # make sure user's default project is legit before scoping to it
         try:
-            default_project_ref = self.resource_api.get_project(
+            default_project_ref = PROVIDERS.resource_api.get_project(
                 default_project_id)
-            default_project_domain_ref = self.resource_api.get_domain(
+            default_project_domain_ref = PROVIDERS.resource_api.get_domain(
                 default_project_ref['domain_id'])
             if (default_project_ref.get('enabled', True) and
                     default_project_domain_ref.get('enabled', True)):
-                if self.assignment_api.get_roles_for_user_and_project(
+                if PROVIDERS.assignment_api.get_roles_for_user_and_project(
                         user_ref['id'], default_project_id):
                     auth_info.set_scope(project_id=default_project_id)
                 else:
@@ -199,24 +210,24 @@ class Auth(controller.V3Controller):
                            " default project %(project_id)s. The token"
                            " will be unscoped rather than scoped to the"
                            " project.")
-                    LOG.warning(msg,
-                                {'user_id': user_ref['id'],
-                                 'project_id': default_project_id})
+                    LOG.debug(msg,
+                              {'user_id': user_ref['id'],
+                               'project_id': default_project_id})
             else:
                 msg = ("User %(user_id)s's default project %(project_id)s"
                        " is disabled. The token will be unscoped rather"
                        " than scoped to the project.")
-                LOG.warning(msg,
-                            {'user_id': user_ref['id'],
-                             'project_id': default_project_id})
+                LOG.debug(msg,
+                          {'user_id': user_ref['id'],
+                           'project_id': default_project_id})
         except (exception.ProjectNotFound, exception.DomainNotFound):
             # default project or default project domain doesn't exist,
             # will issue unscoped token instead
             msg = ("User %(user_id)s's default project %(project_id)s not"
                    " found. The token will be unscoped rather than"
                    " scoped to the project.")
-            LOG.warning(msg, {'user_id': user_ref['id'],
-                              'project_id': default_project_id})
+            LOG.debug(msg, {'user_id': user_ref['id'],
+                            'project_id': default_project_id})
 
     def authenticate(self, request, auth_info, auth_context):
         """Authenticate user."""
@@ -230,7 +241,7 @@ class Auth(controller.V3Controller):
             LOG.error(
                 '`auth_context` passed to the Auth controller '
                 '`authenticate` method is not of type '
-                '`keystone.auth.controllers.AuthContext`. For security '
+                '`keystone.auth.core.AuthContext`. For security '
                 'purposes this is required. This is likely a programming '
                 'error. Received object of type `%s`', type(auth_context))
             raise exception.Unauthorized(
@@ -300,7 +311,7 @@ class Auth(controller.V3Controller):
     def check_token(self, request):
         token_id = request.context_dict.get('subject_token_id')
         window_seconds = authorization.token_validation_window(request)
-        token_data = self.token_provider_api.validate_token(
+        token_data = PROVIDERS.token_provider_api.validate_token(
             token_id, window_seconds=window_seconds)
         # NOTE(morganfainberg): The code in
         # ``keystone.common.wsgi.render_response`` will remove the content
@@ -310,14 +321,14 @@ class Auth(controller.V3Controller):
     @controller.protected()
     def revoke_token(self, request):
         token_id = request.context_dict.get('subject_token_id')
-        return self.token_provider_api.revoke_token(token_id)
+        return PROVIDERS.token_provider_api.revoke_token(token_id)
 
     @controller.protected()
     def validate_token(self, request):
         token_id = request.context_dict.get('subject_token_id')
         window_seconds = authorization.token_validation_window(request)
         include_catalog = 'nocatalog' not in request.params
-        token_data = self.token_provider_api.validate_token(
+        token_data = PROVIDERS.token_provider_api.validate_token(
             token_id, window_seconds=window_seconds)
         if not include_catalog and 'catalog' in token_data['token']:
             del token_data['token']['catalog']
@@ -330,7 +341,7 @@ class Auth(controller.V3Controller):
 
         audit_id_only = 'audit_id_only' in request.params
 
-        tokens = self.token_provider_api.list_revoked_tokens()
+        tokens = PROVIDERS.token_provider_api.list_revoked_tokens()
 
         for t in tokens:
             expires = t['expires']
@@ -367,14 +378,18 @@ class Auth(controller.V3Controller):
         user_refs = []
         if user_id:
             try:
-                user_refs = self.assignment_api.list_projects_for_user(user_id)
+                user_refs = PROVIDERS.assignment_api.list_projects_for_user(
+                    user_id
+                )
             except exception.UserNotFound:  # nosec
                 # federated users have an id but they don't link to anything
                 pass
 
         grp_refs = []
         if group_ids:
-            grp_refs = self.assignment_api.list_projects_for_groups(group_ids)
+            grp_refs = PROVIDERS.assignment_api.list_projects_for_groups(
+                group_ids
+            )
 
         refs = self._combine_lists_uniquely(user_refs, grp_refs)
         return resource_controllers.ProjectV3.wrap_collection(
@@ -388,18 +403,70 @@ class Auth(controller.V3Controller):
         user_refs = []
         if user_id:
             try:
-                user_refs = self.assignment_api.list_domains_for_user(user_id)
+                user_refs = PROVIDERS.assignment_api.list_domains_for_user(
+                    user_id
+                )
             except exception.UserNotFound:  # nosec
                 # federated users have an id but they don't link to anything
                 pass
 
         grp_refs = []
         if group_ids:
-            grp_refs = self.assignment_api.list_domains_for_groups(group_ids)
+            grp_refs = PROVIDERS.assignment_api.list_domains_for_groups(
+                group_ids
+            )
 
         refs = self._combine_lists_uniquely(user_refs, grp_refs)
         return resource_controllers.DomainV3.wrap_collection(
             request.context_dict, refs)
+
+    @controller.protected()
+    def get_auth_system(self, request):
+        user_id = request.auth_context.get('user_id')
+        group_ids = request.auth_context.get('group_ids')
+
+        user_assignments = []
+        if user_id:
+            try:
+                user_assignments = (
+                    PROVIDERS.assignment_api.list_system_grants_for_user(
+                        user_id
+                    )
+                )
+            except exception.UserNotFound:  # nosec
+                # federated users have an id but they don't link to anything
+                pass
+
+        group_assignments = []
+        if group_ids:
+            group_assignments = (
+                PROVIDERS.assignment_api.list_system_grants_for_group(
+                    group_ids
+                )
+            )
+
+        assignments = self._combine_lists_uniquely(
+            user_assignments, group_assignments
+        )
+        if assignments:
+            response = {
+                'system': [{'all': True}],
+                'links': {
+                    'self': self.base_url(
+                        request.context_dict, path='auth/system'
+                    )
+                }
+            }
+        else:
+            response = {
+                'system': [],
+                'links': {
+                    'self': self.base_url(
+                        request.context_dict, path='auth/system'
+                    )
+                }
+            }
+        return response
 
     @controller.protected()
     def get_auth_catalog(self, request):
@@ -418,7 +485,9 @@ class Auth(controller.V3Controller):
         # self-referential link building) to avoid overriding or refactoring
         # several private methods.
         return {
-            'catalog': self.catalog_api.get_v3_catalog(user_id, project_id),
+            'catalog': PROVIDERS.catalog_api.get_v3_catalog(
+                user_id, project_id
+            ),
             'links': {'self': self.base_url(request.context_dict,
                                             path='auth/catalog')}
         }

@@ -23,8 +23,7 @@ identity of the user.
 Configuration
 =============
 
-In Identity API v2, there is no way to disable external authentication. In
-order to activate the external authentication mechanism for Identity API v3,
+In order to activate the external authentication mechanism for Identity API v3,
 the ``external`` method must be in the list of enabled authentication methods.
 By default it is enabled, so if you don't want to use external authentication,
 remove it from the ``methods`` option in the ``auth`` section.
@@ -172,9 +171,9 @@ authentication.
 For example, if the original pipeline looks like this::
 
     [pipeline:public_api]
-    pipeline = url_normalize token_auth admin_token_auth json_body debug ec2_extension user_crud_extension public_service
+    pipeline = url_normalize token_auth json_body debug ec2_extension user_crud_extension public_service
 
 Your modified pipeline might then look like this::
 
     [pipeline:public_api]
-    pipeline = url_normalize token_auth admin_token_auth json_body my_auth debug ec2_extension user_crud_extension public_service
+    pipeline = url_normalize token_auth json_body my_auth debug ec2_extension user_crud_extension public_service

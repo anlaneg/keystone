@@ -16,14 +16,16 @@ from oslo_utils import timeutils
 
 from keystone.auth.plugins import base
 from keystone.common import controller
-from keystone.common import dependency
+from keystone.common import provider_api
 from keystone import exception
 from keystone.i18n import _
 from keystone.oauth1 import core as oauth
 from keystone.oauth1 import validator
 
 
-@dependency.requires('oauth_api')
+PROVIDERS = provider_api.ProviderAPIs
+
+
 class OAuth(base.AuthMethodHandler):
     def authenticate(self, request, auth_payload):
         """Turn a signed request with an access key into a keystone token."""
@@ -35,7 +37,7 @@ class OAuth(base.AuthMethodHandler):
             raise exception.ValidationError(
                 attribute='oauth_token', target='request')
 
-        acc_token = self.oauth_api.get_access_token(access_token_id)
+        acc_token = PROVIDERS.oauth_api.get_access_token(access_token_id)
 
         expires_at = acc_token['expires_at']
         if expires_at:

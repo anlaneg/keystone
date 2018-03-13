@@ -15,8 +15,10 @@
 
 import json
 import os
+import subprocess
 import uuid
 
+import mock
 from oslo_policy import policy as common_policy
 import six
 from testtools import matchers
@@ -126,6 +128,41 @@ class PolicyTestCase(unit.TestCase):
         policy.enforce(admin_credentials, uppercase_action, self.target)
 
 
+class PolicyScopeTypesEnforcementTestCase(unit.TestCase):
+
+    def setUp(self):
+        super(PolicyScopeTypesEnforcementTestCase, self).setUp()
+        policy.init()
+        rule = common_policy.RuleDefault(
+            name='foo',
+            check_str='',
+            scope_types=['system']
+        )
+        policy._ENFORCER.register_default(rule)
+        self.credentials = {}
+        self.action = 'foo'
+        self.target = {}
+
+    def test_forbidden_is_raised_if_enforce_scope_is_true(self):
+        self.config_fixture.config(group='oslo_policy', enforce_scope=True)
+        self.assertRaises(
+            exception.ForbiddenAction, policy.enforce, self.credentials,
+            self.action, self.target
+        )
+
+    def test_warning_message_is_logged_if_enforce_scope_is_false(self):
+        self.config_fixture.config(group='oslo_policy', enforce_scope=False)
+        expected_msg = (
+            'Policy foo failed scope check. The token used to make the '
+            'request was project scoped but the policy requires [\'system\'] '
+            'scope. This behavior may change in the future where using the '
+            'intended scope is required'
+        )
+        with mock.patch('warnings.warn') as mock_warn:
+            policy.enforce(self.credentials, self.action, self.target)
+            mock_warn.assert_called_once_with(expected_msg)
+
+
 class PolicyJsonTestCase(unit.TestCase):
 
     def _get_default_policy_rules(self):
@@ -213,3 +250,18 @@ class PolicyJsonTestCase(unit.TestCase):
 
         doc_targets = list(read_doc_targets())
         self.assertItemsEqual(policy_keys, doc_targets + policy_rule_keys)
+
+
+class GeneratePolicyFileTestCase(unit.TestCase):
+
+    def test_policy_generator_from_command_line(self):
+        # This test ensures keystone.common.policy:get_enforcer ignores
+        # unexpected arguments before handing them off to oslo.config, which
+        # will fail and prevent users from generating policy files.
+        ret_val = subprocess.Popen(
+            ['oslopolicy-policy-generator', '--namespace', 'keystone'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        ret_val.communicate()
+        self.assertEqual(ret_val.returncode, 0)

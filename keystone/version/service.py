@@ -19,6 +19,7 @@ from oslo_log import log
 from paste import deploy
 import routes
 
+from keystone.application_credential import routers as app_cred_routers
 from keystone.assignment import routers as assignment_routers
 from keystone.auth import routers as auth_routers
 from keystone.catalog import routers as catalog_routers
@@ -28,13 +29,13 @@ from keystone.credential import routers as credential_routers
 from keystone.endpoint_policy import routers as endpoint_policy_routers
 from keystone.federation import routers as federation_routers
 from keystone.identity import routers as identity_routers
+from keystone.limit import routers as limit_routers
 from keystone.oauth1 import routers as oauth1_routers
 from keystone.policy import routers as policy_routers
 from keystone.resource import routers as resource_routers
 from keystone.revoke import routers as revoke_routers
 from keystone.token import _simple_cert as simple_cert_ext
 from keystone.trust import routers as trust_routers
-from keystone.v2_crud import admin_crud
 from keystone.version import controllers
 from keystone.version import routers
 
@@ -80,20 +81,24 @@ def warn_local_conf(f):
 @warn_local_conf
 def public_app_factory(global_conf, **local_conf):
     controllers.register_version('v2.0')
-    return wsgi.ComposingRouter(routes.Mapper(),
-                                [assignment_routers.Public(),
-                                 routers.VersionV2('public'),
-                                 routers.Extension(False)])
+    # NOTE(lbragstad): Only wire up the v2.0 version controller. We should keep
+    # this here because we still support the ec2tokens API on the v2.0 path
+    # until T. Once that is removed, we can remove the rest of the v2.0 routers
+    # and whatnot. The ec2token controller is actually wired up by the paste
+    # pipeline.
+    return wsgi.ComposingRouter(routes.Mapper(), [routers.VersionV2('public')])
 
 
 @fail_gracefully
 @warn_local_conf
 def admin_app_factory(global_conf, **local_conf):
     controllers.register_version('v2.0')
-    return wsgi.ComposingRouter(routes.Mapper(),
-                                [admin_crud.Router(),
-                                 routers.VersionV2('admin'),
-                                 routers.Extension()])
+    # NOTE(lbragstad): Only wire up the v2.0 version controller. We should keep
+    # this here because we still support the ec2tokens API on the v2.0 path
+    # until T. Once that is removed, we can remove the rest of the v2.0 routers
+    # and whatnot. The ec2token controller is actually wired up by the paste
+    # pipeline.
+    return wsgi.ComposingRouter(routes.Mapper(), [routers.VersionV2('admin')])
 
 
 @fail_gracefully
@@ -126,6 +131,8 @@ def v3_app_factory(global_conf, **local_conf):
                        catalog_routers,
                        credential_routers,
                        identity_routers,
+                       app_cred_routers,
+                       limit_routers,
                        policy_routers,
                        resource_routers,
                        revoke_routers,

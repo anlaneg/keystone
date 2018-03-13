@@ -15,25 +15,23 @@
 """Token provider interface."""
 
 import datetime
-import sys
 
 from oslo_log import log
 from oslo_utils import timeutils
-import six
 
 from keystone.common import cache
-from keystone.common import dependency
 from keystone.common import manager
+from keystone.common import provider_api
 import keystone.conf
 from keystone import exception
 from keystone.i18n import _
 from keystone.models import token_model
 from keystone import notifications
-from keystone.token import persistence
 
 
 CONF = keystone.conf.CONF
 LOG = log.getLogger(__name__)
+PROVIDERS = provider_api.ProviderAPIs
 
 TOKENS_REGION = cache.create_region(name='tokens')
 MEMOIZE_TOKENS = cache.get_memoization_decorator(
@@ -49,8 +47,6 @@ V3 = token_model.V3
 VERSIONS = token_model.VERSIONS
 
 
-@dependency.provider('token_provider_api')
-@dependency.requires('assignment_api', 'revoke_api')
 class Manager(manager.Manager):
     """Default pivot point for the token provider backend.
 
@@ -60,12 +56,10 @@ class Manager(manager.Manager):
     """
 
     driver_namespace = 'keystone.token.provider'
+    _provides_api = 'token_provider_api'
 
     V3 = V3
     VERSIONS = VERSIONS
-    INVALIDATE_PROJECT_TOKEN_PERSISTENCE = 'invalidate_project_tokens'
-    INVALIDATE_USER_TOKEN_PERSISTENCE = 'invalidate_user_tokens'
-    _persistence_manager = None
 
     def __init__(self):
         super(Manager, self).__init__(CONF.token.provider)
@@ -76,22 +70,18 @@ class Manager(manager.Manager):
         # provider (token_provider_api) manager to listen for trust deletions.
         callbacks = {
             notifications.ACTIONS.deleted: [
-                ['OS-TRUST:trust', self._trust_deleted_event_callback],
-                ['user', self._delete_user_tokens_callback],
-                ['domain', self._delete_domain_tokens_callback],
+                ['OS-TRUST:trust', self._drop_token_cache],
+                ['user', self._drop_token_cache],
+                ['domain', self._drop_token_cache],
             ],
             notifications.ACTIONS.disabled: [
-                ['user', self._delete_user_tokens_callback],
-                ['domain', self._delete_domain_tokens_callback],
-                ['project', self._delete_project_tokens_callback],
+                ['user', self._drop_token_cache],
+                ['domain', self._drop_token_cache],
+                ['project', self._drop_token_cache],
             ],
             notifications.ACTIONS.internal: [
-                [notifications.INVALIDATE_USER_TOKEN_PERSISTENCE,
-                    self._delete_user_tokens_callback],
-                [notifications.INVALIDATE_USER_PROJECT_TOKEN_PERSISTENCE,
-                    self._delete_user_project_tokens_callback],
-                [notifications.INVALIDATE_USER_OAUTH_CONSUMER_TOKENS,
-                    self._delete_user_oauth_consumer_tokens_callback],
+                [notifications.INVALIDATE_TOKEN_CACHE,
+                    self._drop_token_cache],
             ]
         }
 
@@ -100,34 +90,15 @@ class Manager(manager.Manager):
                 notifications.register_event_callback(event, resource_type,
                                                       callback_fns)
 
-    @property
-    def _needs_persistence(self):
-        return self.driver.needs_persistence()
+    def _drop_token_cache(self, service, resource_type, operation, payload):
+        """Invalidate the entire token cache.
 
-    @property
-    def _persistence(self):
-        # NOTE(morganfainberg): This should not be handled via __init__ to
-        # avoid dependency injection oddities circular dependencies (where
-        # the provider manager requires the token persistence manager, which
-        # requires the token provider manager).
-        if self._persistence_manager is None:
-            self._persistence_manager = persistence.PersistenceManager()
-        return self._persistence_manager
+        This is a handy private utility method that should be used when
+        consuming notifications that signal invalidating the token cache.
 
-    def _create_token(self, token_id, token_data):
-        try:
-            if isinstance(token_data['expires'], six.string_types):
-                token_data['expires'] = timeutils.normalize_time(
-                    timeutils.parse_isotime(token_data['expires']))
-            self._persistence.create_token(token_id, token_data)
-        except Exception:
-            exc_info = sys.exc_info()
-            # an identical token may have been created already.
-            # if so, return the token_data as it is also identical
-            try:
-                self._persistence.get_token(token_id)
-            except exception.TokenNotFound:
-                six.reraise(*exc_info)
+        """
+        if CONF.token.cache_on_issue:
+            TOKENS_REGION.invalidate()
 
     def check_revocation_v3(self, token):
         try:
@@ -135,7 +106,7 @@ class Manager(manager.Manager):
         except KeyError:
             raise exception.TokenNotFound(_('Failed to validate token'))
         token_values = self.revoke_api.model.build_token_values(token_data)
-        self.revoke_api.check_token(token_values)
+        PROVIDERS.revoke_api.check_token(token_values)
 
     def check_revocation(self, token):
         return self.check_revocation_v3(token)
@@ -145,15 +116,6 @@ class Manager(manager.Manager):
             raise exception.TokenNotFound(_('No token in the request'))
 
         try:
-            # NOTE(lbragstad): Only go to persistent storage if we have a token
-            # to fetch from the backend (the driver persists the token).
-            # Otherwise the information about the token must be in the token
-            # id.
-            if self._needs_persistence:
-                token_ref = self._persistence.get_token(token_id)
-                # Overload the token_id variable to be a token reference
-                # instead.
-                token_id = token_ref
             token_ref = self._validate_token(token_id)
             self._is_valid_token(token_ref, window_seconds=window_seconds)
             return token_ref
@@ -197,24 +159,16 @@ class Manager(manager.Manager):
             raise exception.TokenNotFound(_('Failed to validate token'))
 
     def issue_token(self, user_id, method_names, expires_at=None,
-                    project_id=None, is_domain=False, domain_id=None,
-                    auth_context=None, trust=None, include_catalog=True,
+                    system=None, project_id=None, is_domain=False,
+                    domain_id=None, auth_context=None, trust=None,
+                    app_cred_id=None, include_catalog=True,
                     parent_audit_id=None):
         token_id, token_data = self.driver.issue_token(
-            user_id, method_names, expires_at, project_id, domain_id,
-            auth_context, trust, include_catalog, parent_audit_id)
-
-        if self._needs_persistence:
-            data = dict(key=token_id,
-                        id=token_id,
-                        expires=token_data['token']['expires_at'],
-                        user=token_data['token']['user'],
-                        tenant=token_data['token'].get('project'),
-                        is_domain=is_domain,
-                        token_data=token_data,
-                        trust_id=trust['id'] if trust else None,
-                        token_version=self.V3)
-            self._create_token(token_id, data)
+            user_id, method_names, expires_at=expires_at,
+            system=system, project_id=project_id,
+            domain_id=domain_id, auth_context=auth_context, trust=trust,
+            app_cred_id=app_cred_id, include_catalog=include_catalog,
+            parent_audit_id=parent_audit_id)
 
         if CONF.token.cache_on_issue:
             # NOTE(amakarov): here and above TOKENS_REGION is to be passed
@@ -245,14 +199,12 @@ class Manager(manager.Manager):
         domain_id = token_ref.domain_id if token_ref.domain_scoped else None
 
         if revoke_chain:
-            self.revoke_api.revoke_by_audit_chain_id(token_ref.audit_chain_id,
-                                                     project_id=project_id,
-                                                     domain_id=domain_id)
+            PROVIDERS.revoke_api.revoke_by_audit_chain_id(
+                token_ref.audit_chain_id, project_id=project_id,
+                domain_id=domain_id
+            )
         else:
-            self.revoke_api.revoke_by_audit_id(token_ref.audit_id)
-
-        if CONF.token.revoke_by_id and self._needs_persistence:
-            self._persistence.delete_token(token_id=token_id)
+            PROVIDERS.revoke_api.revoke_by_audit_id(token_ref.audit_id)
 
         # FIXME(morganfainberg): Does this cache actually need to be
         # invalidated? We maintain a cached revocation list, which should be
@@ -261,67 +213,12 @@ class Manager(manager.Manager):
         self.invalidate_individual_token_cache(token_id)
 
     def list_revoked_tokens(self):
-        return self._persistence.list_revoked_tokens()
-
-    def _trust_deleted_event_callback(self, service, resource_type, operation,
-                                      payload):
-        if CONF.token.revoke_by_id:
-            trust_id = payload['resource_info']
-            trust = self.trust_api.get_trust(trust_id, deleted=True)
-            self._persistence.delete_tokens(user_id=trust['trustor_user_id'],
-                                            trust_id=trust_id)
-        if CONF.token.cache_on_issue:
-            # NOTE(amakarov): preserving behavior
-            TOKENS_REGION.invalidate()
-
-    def _delete_user_tokens_callback(self, service, resource_type, operation,
-                                     payload):
-        if CONF.token.revoke_by_id:
-            user_id = payload['resource_info']
-            self._persistence.delete_tokens_for_user(user_id)
-        if CONF.token.cache_on_issue:
-            # NOTE(amakarov): preserving behavior
-            TOKENS_REGION.invalidate()
-
-    def _delete_domain_tokens_callback(self, service, resource_type,
-                                       operation, payload):
-        if CONF.token.revoke_by_id:
-            domain_id = payload['resource_info']
-            self._persistence.delete_tokens_for_domain(domain_id=domain_id)
-        if CONF.token.cache_on_issue:
-            # NOTE(amakarov): preserving behavior
-            TOKENS_REGION.invalidate()
-
-    def _delete_user_project_tokens_callback(self, service, resource_type,
-                                             operation, payload):
-        if CONF.token.revoke_by_id:
-            user_id = payload['resource_info']['user_id']
-            project_id = payload['resource_info']['project_id']
-            self._persistence.delete_tokens_for_user(user_id=user_id,
-                                                     project_id=project_id)
-        if CONF.token.cache_on_issue:
-            # NOTE(amakarov): preserving behavior
-            TOKENS_REGION.invalidate()
-
-    def _delete_project_tokens_callback(self, service, resource_type,
-                                        operation, payload):
-        if CONF.token.revoke_by_id:
-            project_id = payload['resource_info']
-            self._persistence.delete_tokens_for_users(
-                self.assignment_api.list_user_ids_for_project(project_id),
-                project_id=project_id)
-        if CONF.token.cache_on_issue:
-            # NOTE(amakarov): preserving behavior
-            TOKENS_REGION.invalidate()
-
-    def _delete_user_oauth_consumer_tokens_callback(self, service,
-                                                    resource_type, operation,
-                                                    payload):
-        if CONF.token.revoke_by_id:
-            user_id = payload['resource_info']['user_id']
-            consumer_id = payload['resource_info']['consumer_id']
-            self._persistence.delete_tokens(user_id=user_id,
-                                            consumer_id=consumer_id)
-        if CONF.token.cache_on_issue:
-            # NOTE(amakarov): preserving behavior
-            TOKENS_REGION.invalidate()
+        # FIXME(lbragstad): In the future, the token providers are going to be
+        # responsible for handling persistence if they require it (e.g. token
+        # providers not doing some sort of authenticated encryption strategy).
+        # When that happens, we could still expose this API by checking an
+        # interface on the provider can calling it if available. For now, this
+        # will return a valid response, but it will just be an empty list. See
+        # http://paste.openstack.org/raw/670196/ for and example using
+        # keystoneclient.common.cms to verify the response.
+        return []

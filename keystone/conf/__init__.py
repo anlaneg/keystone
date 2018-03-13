@@ -19,6 +19,7 @@ import oslo_messaging
 from oslo_middleware import cors
 from osprofiler import opts as profiler
 
+from keystone.conf import application_credential
 from keystone.conf import assignment
 from keystone.conf import auth
 from keystone.conf import catalog
@@ -47,12 +48,13 @@ from keystone.conf import signing
 from keystone.conf import token
 from keystone.conf import tokenless_auth
 from keystone.conf import trust
-
+from keystone.conf import unified_limit
 
 CONF = cfg.CONF
 
 
 conf_modules = [
+    application_credential,
     assignment,
     auth,
     catalog,
@@ -81,6 +83,7 @@ conf_modules = [
     token,
     tokenless_auth,
     trust,
+    unified_limit,
 ]
 
 

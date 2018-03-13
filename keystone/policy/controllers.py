@@ -16,9 +16,12 @@ from oslo_log import versionutils
 import six
 
 from keystone.common import controller
-from keystone.common import dependency
+from keystone.common import provider_api
 from keystone.common import validation
 from keystone.policy import schema
+
+
+PROVIDERS = provider_api.ProviderAPIs
 
 
 def policy_deprecated(f):
@@ -31,7 +34,6 @@ def policy_deprecated(f):
     return wrapper()
 
 
-@dependency.requires('policy_api')
 class PolicyV3(controller.V3Controller):
     collection_name = 'policies'
     member_name = 'policy'
@@ -41,7 +43,7 @@ class PolicyV3(controller.V3Controller):
     def create_policy(self, request, policy):
         validation.lazy_validate(schema.policy_create, policy)
         ref = self._assign_unique_id(self._normalize_dict(policy))
-        ref = self.policy_api.create_policy(
+        ref = PROVIDERS.policy_api.create_policy(
             ref['id'], ref, initiator=request.audit_initiator
         )
         return PolicyV3.wrap_member(request.context_dict, ref)
@@ -50,21 +52,21 @@ class PolicyV3(controller.V3Controller):
     @controller.filterprotected('type')
     def list_policies(self, request, filters):
         hints = PolicyV3.build_driver_hints(request, filters)
-        refs = self.policy_api.list_policies(hints=hints)
+        refs = PROVIDERS.policy_api.list_policies(hints=hints)
         return PolicyV3.wrap_collection(request.context_dict,
                                         refs, hints=hints)
 
     @policy_deprecated
     @controller.protected()
     def get_policy(self, request, policy_id):
-        ref = self.policy_api.get_policy(policy_id)
+        ref = PROVIDERS.policy_api.get_policy(policy_id)
         return PolicyV3.wrap_member(request.context_dict, ref)
 
     @policy_deprecated
     @controller.protected()
     def update_policy(self, request, policy_id, policy):
         validation.lazy_validate(schema.policy_update, policy)
-        ref = self.policy_api.update_policy(
+        ref = PROVIDERS.policy_api.update_policy(
             policy_id, policy, initiator=request.audit_initiator
         )
         return PolicyV3.wrap_member(request.context_dict, ref)
@@ -72,6 +74,6 @@ class PolicyV3(controller.V3Controller):
     @policy_deprecated
     @controller.protected()
     def delete_policy(self, request, policy_id):
-        return self.policy_api.delete_policy(
+        return PROVIDERS.policy_api.delete_policy(
             policy_id, initiator=request.audit_initiator
         )

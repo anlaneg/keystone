@@ -16,6 +16,7 @@ from __future__ import absolute_import
 
 import base64
 import datetime
+import itertools
 import uuid
 
 from oslo_log import log
@@ -24,7 +25,7 @@ from oslo_utils import timeutils
 import six
 from six.moves.urllib import parse
 
-from keystone.common import dependency
+from keystone.common import provider_api
 from keystone.common import utils
 import keystone.conf
 from keystone import exception
@@ -36,6 +37,7 @@ from keystone.token.providers import base
 
 LOG = log.getLogger(__name__)
 CONF = keystone.conf.CONF
+PROVIDERS = provider_api.ProviderAPIs
 
 
 def default_expire_time():
@@ -82,10 +84,7 @@ def build_audit_info(parent_audit_id=None):
     return [audit_id]
 
 
-@dependency.requires('assignment_api', 'catalog_api', 'federation_api',
-                     'identity_api', 'resource_api', 'role_api', 'trust_api',
-                     'oauth_api')
-class V3TokenDataHelper(object):
+class V3TokenDataHelper(provider_api.ProviderAPIMixin, object):
     """Token data helper."""
 
     def __init__(self):
@@ -93,11 +92,33 @@ class V3TokenDataHelper(object):
         super(V3TokenDataHelper, self).__init__()
 
     def _get_filtered_domain(self, domain_id):
-        domain_ref = self.resource_api.get_domain(domain_id)
+        """Ensure the domain is enabled and return domain id and name.
+
+        :param domain_id: The ID of the domain to validate
+        :returns: A dictionary containing two keys, the `id` of the domain and
+                  the `name` of the domain.
+        """
+        domain_ref = PROVIDERS.resource_api.get_domain(domain_id)
+        if not domain_ref.get('enabled'):
+            msg = _('Unable to validate token because domain %(id)s is '
+                    'disabled') % {'id': domain_ref['id']}
+            LOG.warning(msg)
+            raise exception.DomainNotFound(msg)
         return {'id': domain_ref['id'], 'name': domain_ref['name']}
 
     def _get_filtered_project(self, project_id):
-        project_ref = self.resource_api.get_project(project_id)
+        """Ensure the project and parent domain is enabled.
+
+        :param project_id: The ID of the project to validate
+        :return: A dictionary containing up to three keys, the `id` of the
+                 project, the `name` of the project, and the parent `domain`.
+        """
+        project_ref = PROVIDERS.resource_api.get_project(project_id)
+        if not project_ref.get('enabled'):
+            msg = _('Unable to validate token because project %(id)s is '
+                    'disabled') % {'id': project_ref['id']}
+            LOG.warning(msg)
+            raise exception.ProjectNotFound(msg)
         filtered_project = {
             'id': project_ref['id'],
             'name': project_ref['name']}
@@ -109,17 +130,22 @@ class V3TokenDataHelper(object):
             filtered_project['domain'] = None
         return filtered_project
 
-    def _populate_scope(self, token_data, domain_id, project_id):
+    def _populate_scope(self, token_data, system, domain_id, project_id):
         if 'domain' in token_data or 'project' in token_data:
             # scope already exist, no need to populate it again
             return
 
         if domain_id:
             token_data['domain'] = self._get_filtered_domain(domain_id)
-        if project_id:
+        elif project_id:
             token_data['project'] = self._get_filtered_project(project_id)
-            project_ref = self.resource_api.get_project(project_id)
+            project_ref = PROVIDERS.resource_api.get_project(project_id)
             token_data['is_domain'] = project_ref['is_domain']
+        elif system == 'all':
+            # NOTE(lbragstad): This might have to be more elegant in the future
+            # if, or when, keystone supports scoping a token to a specific
+            # service or region.
+            token_data['system'] = {'all': True}
 
     def _populate_is_admin_project(self, token_data):
         # TODO(ayoung): Support the ability for a project acting as a domain
@@ -139,20 +165,51 @@ class V3TokenDataHelper(object):
             project['name'] == admin_project_name and
             project['domain']['name'] == admin_project_domain_name)
 
-    def _get_roles_for_user(self, user_id, domain_id, project_id):
+    def _get_roles_for_user(self, user_id, system, domain_id, project_id):
         roles = []
+        if system:
+            group_ids = [
+                group['id'] for
+                group in PROVIDERS.identity_api.list_groups_for_user(user_id)
+            ]
+            group_roles = []
+            for group_id in group_ids:
+                roles = PROVIDERS.assignment_api.list_system_grants_for_group(
+                    group_id
+                )
+                for role in roles:
+                    group_roles.append(role)
+
+            user_roles = PROVIDERS.assignment_api.list_system_grants_for_user(
+                user_id
+            )
+            return itertools.chain(group_roles, user_roles)
         if domain_id:
-            roles = self.assignment_api.get_roles_for_user_and_domain(
+            roles = PROVIDERS.assignment_api.get_roles_for_user_and_domain(
                 user_id, domain_id)
         if project_id:
-            roles = self.assignment_api.get_roles_for_user_and_project(
+            roles = PROVIDERS.assignment_api.get_roles_for_user_and_project(
                 user_id, project_id)
-        return [self.role_api.get_role(role_id) for role_id in roles]
+        return [PROVIDERS.role_api.get_role(role_id) for role_id in roles]
+
+    def _get_app_cred_roles(self, app_cred, user_id, domain_id, project_id):
+        roles = app_cred['roles']
+        token_roles = []
+        for role in roles:
+            try:
+                role_ref = PROVIDERS.assignment_api.get_grant(
+                    role['id'], user_id=user_id, domain_id=domain_id,
+                    project_id=project_id)
+                token_roles.append(role_ref)
+            except exception.RoleAssignmentNotFound:
+                pass
+        return [
+            PROVIDERS.role_api.get_role(role['id']) for role in token_roles]
 
     def populate_roles_for_federated_user(self, token_data, group_ids,
                                           project_id=None, domain_id=None,
-                                          user_id=None):
-        """Populate roles basing on provided groups and project/domain.
+                                          user_id=None, system=None):
+        """Populate roles basing on provided groups and assignments.
 
         Used for federated users with dynamically assigned groups.
         This method does not return anything, yet it modifies token_data in
@@ -163,6 +220,7 @@ class V3TokenDataHelper(object):
         :param project_id: project ID to scope to
         :param domain_id: domain ID to scope to
         :param user_id: user ID
+        :param system: system scope if applicable
 
         :raises keystone.exception.Unauthorized: when no roles were found
 
@@ -186,11 +244,12 @@ class V3TokenDataHelper(object):
             # appropriate error message.
             raise exception.Unauthorized(msg)
 
-        roles = self.assignment_api.get_roles_for_groups(group_ids,
-                                                         project_id,
-                                                         domain_id)
-        roles = roles + self._get_roles_for_user(user_id, domain_id,
-                                                 project_id)
+        roles = PROVIDERS.assignment_api.get_roles_for_groups(
+            group_ids, project_id, domain_id
+        )
+        roles = roles + self._get_roles_for_user(
+            user_id, system, domain_id, project_id
+        )
 
         # NOTE(lbragstad): Remove duplicate role references from a list of
         # roles. It is often suggested that this be done with:
@@ -217,25 +276,27 @@ class V3TokenDataHelper(object):
             # no need to repopulate user if it already exists
             return
 
-        user_ref = self.identity_api.get_user(user_id)
+        user_ref = PROVIDERS.identity_api.get_user(user_id)
         if CONF.trust.enabled and trust and 'OS-TRUST:trust' not in token_data:
-            trustor_user_ref = (self.identity_api.get_user(
+            trustor_user_ref = (PROVIDERS.identity_api.get_user(
                                 trust['trustor_user_id']))
-            trustee_user_ref = (self.identity_api.get_user(
+            trustee_user_ref = (PROVIDERS.identity_api.get_user(
                                 trust['trustee_user_id']))
             try:
-                self.resource_api.assert_domain_enabled(
+                PROVIDERS.resource_api.assert_domain_enabled(
                     trustor_user_ref['domain_id'])
             except AssertionError:
                 raise exception.TokenNotFound(_('Trustor domain is disabled.'))
             try:
-                self.resource_api.assert_domain_enabled(
+                PROVIDERS.resource_api.assert_domain_enabled(
                     trustee_user_ref['domain_id'])
             except AssertionError:
                 raise exception.TokenNotFound(_('Trustee domain is disabled.'))
 
             try:
-                self.identity_api.assert_user_enabled(trust['trustor_user_id'])
+                PROVIDERS.identity_api.assert_user_enabled(
+                    trust['trustor_user_id']
+                )
             except AssertionError:
                 raise exception.Forbidden(_('Trustor is disabled.'))
             if trust['impersonation']:
@@ -261,19 +322,19 @@ class V3TokenDataHelper(object):
             token_data['OS-OAUTH1'] = ({'access_token_id': access_token_id,
                                         'consumer_id': consumer_id})
 
-    def _populate_roles(self, token_data, user_id, domain_id, project_id,
-                        trust, access_token):
+    def _populate_roles(self, token_data, user_id, system, domain_id,
+                        project_id, trust, app_cred_id, access_token):
         if 'roles' in token_data:
             # no need to repopulate roles
             return
 
         if access_token:
             filtered_roles = []
-            access_token_ref = self.oauth_api.get_access_token(
+            access_token_ref = PROVIDERS.oauth_api.get_access_token(
                 access_token['id']
             )
             authed_role_ids = jsonutils.loads(access_token_ref['role_ids'])
-            all_roles = self.role_api.list_roles()
+            all_roles = PROVIDERS.role_api.list_roles()
             for role in all_roles:
                 for authed_role in authed_role_ids:
                     if authed_role == role['id']:
@@ -288,7 +349,9 @@ class V3TokenDataHelper(object):
             # need to do this because the user ID of the original trustor helps
             # us determine scope in the redelegated context.
             if trust.get('redelegated_trust_id'):
-                trust_chain = self.trust_api.get_trust_pedigree(trust['id'])
+                trust_chain = PROVIDERS.trust_api.get_trust_pedigree(
+                    trust['id']
+                )
                 token_user_id = trust_chain[-1]['trustor_user_id']
             else:
                 token_user_id = trust['trustor_user_id']
@@ -301,22 +364,23 @@ class V3TokenDataHelper(object):
             token_project_id = project_id
             token_domain_id = domain_id
 
-        if token_domain_id or token_project_id:
+        if system or token_domain_id or token_project_id:
             filtered_roles = []
             if CONF.trust.enabled and trust:
                 # First expand out any roles that were in the trust to include
                 # any implied roles, whether global or domain specific
                 refs = [{'role_id': role['id']} for role in trust['roles']]
                 effective_trust_roles = (
-                    self.assignment_api.add_implied_roles(refs))
+                    PROVIDERS.assignment_api.add_implied_roles(refs))
                 # Now get the current role assignments for the trustor,
                 # including any domain specific roles.
-                assignment_list = self.assignment_api.list_role_assignments(
+                assignments = PROVIDERS.assignment_api.list_role_assignments(
                     user_id=token_user_id,
+                    system=system,
                     project_id=token_project_id,
                     effective=True, strip_domain_roles=False)
                 current_effective_trustor_roles = (
-                    list(set([x['role_id'] for x in assignment_list])))
+                    list(set([x['role_id'] for x in assignments])))
                 # Go through each of the effective trust roles, making sure the
                 # trustor still has them, if any have been removed, then we
                 # will treat the trust as invalid
@@ -325,14 +389,25 @@ class V3TokenDataHelper(object):
                     match_roles = [x for x in current_effective_trustor_roles
                                    if x == trust_role['role_id']]
                     if match_roles:
-                        role = self.role_api.get_role(match_roles[0])
+                        role = PROVIDERS.role_api.get_role(match_roles[0])
                         if role['domain_id'] is None:
                             filtered_roles.append(role)
                     else:
                         raise exception.Forbidden(
                             _('Trustee has no delegated roles.'))
+            elif app_cred_id:
+                app_cred_api = PROVIDERS.application_credential_api
+                app_cred_ref = app_cred_api.get_application_credential(
+                    app_cred_id)
+                for role in self._get_app_cred_roles(app_cred_ref,
+                                                     token_user_id,
+                                                     token_domain_id,
+                                                     token_project_id):
+                    filtered_roles.append({'id': role['id'],
+                                           'name': role['name']})
             else:
                 for role in self._get_roles_for_user(token_user_id,
+                                                     system,
                                                      token_domain_id,
                                                      token_project_id):
                     filtered_roles.append({'id': role['id'],
@@ -345,26 +420,35 @@ class V3TokenDataHelper(object):
                             'to project %(project_id)s') % {
                                 'user_id': user_id,
                                 'project_id': token_project_id}
-                else:
+                elif token_domain_id:
                     msg = _('User %(user_id)s has no access '
                             'to domain %(domain_id)s') % {
                                 'user_id': user_id,
                                 'domain_id': token_domain_id}
+                elif system:
+                    msg = _('User %(user_id)s has no access '
+                            'to the system') % {'user_id': user_id}
                 LOG.debug(msg)
                 raise exception.Unauthorized(msg)
 
             token_data['roles'] = filtered_roles
 
-    def _populate_service_catalog(self, token_data, user_id,
-                                  domain_id, project_id, trust):
+    def _populate_service_catalog(self, token_data, user_id, system, domain_id,
+                                  project_id, trust):
         if 'catalog' in token_data:
             # no need to repopulate service catalog
             return
 
         if CONF.trust.enabled and trust:
             user_id = trust['trustor_user_id']
-        if project_id or domain_id:
-            service_catalog = self.catalog_api.get_v3_catalog(
+
+        # NOTE(lbragstad): The catalog API requires a project in order to
+        # generate a service catalog, but that appears to be only if there are
+        # endpoint -> project relationships. In the event we're dealing with a
+        # system_scoped token, we should pass None to the catalog API and just
+        # get a catalog anyway.
+        if project_id or domain_id or system:
+            service_catalog = PROVIDERS.catalog_api.get_v3_catalog(
                 user_id, project_id)
             token_data['catalog'] = service_catalog
 
@@ -372,9 +456,17 @@ class V3TokenDataHelper(object):
         if 'service_providers' in token_data:
             return
 
-        service_providers = self.federation_api.get_enabled_service_providers()
+        service_providers = (
+            PROVIDERS.federation_api.get_enabled_service_providers()
+        )
         if service_providers:
             token_data['service_providers'] = service_providers
+
+    def _validate_identity_provider(self, token_data):
+        federated_info = token_data['user'].get('OS-FEDERATION')
+        if federated_info:
+            idp_id = federated_info['identity_provider']['id']
+            PROVIDERS.federation_api.get_idp(idp_id)
 
     def _populate_token_dates(self, token_data, expires=None, issued_at=None):
         if not expires:
@@ -396,8 +488,19 @@ class V3TokenDataHelper(object):
             LOG.error(msg)
             raise exception.UnexpectedError(msg)
 
-    def get_token_data(self, user_id, method_names, domain_id=None,
-                       project_id=None, expires=None, trust=None, token=None,
+    def _populate_app_cred(self, token_data, app_cred_id):
+        if app_cred_id:
+            app_cred_api = PROVIDERS.application_credential_api
+            app_cred = app_cred_api.get_application_credential(app_cred_id)
+            restricted = not app_cred['unrestricted']
+            token_data['application_credential'] = {}
+            token_data['application_credential']['id'] = app_cred['id']
+            token_data['application_credential']['name'] = app_cred['name']
+            token_data['application_credential']['restricted'] = restricted
+
+    def get_token_data(self, user_id, method_names, system=None,
+                       domain_id=None, project_id=None, expires=None,
+                       app_cred_id=None, trust=None, token=None,
                        include_catalog=True, bind=None, access_token=None,
                        issued_at=None, audit_info=None):
         token_data = {'methods': method_names}
@@ -411,27 +514,28 @@ class V3TokenDataHelper(object):
         if bind:
             token_data['bind'] = bind
 
-        self._populate_scope(token_data, domain_id, project_id)
+        self._populate_scope(token_data, system, domain_id, project_id)
         if token_data.get('project'):
             self._populate_is_admin_project(token_data)
         self._populate_user(token_data, user_id, trust)
-        self._populate_roles(token_data, user_id, domain_id, project_id, trust,
-                             access_token)
+        self._populate_roles(token_data, user_id, system, domain_id,
+                             project_id, trust, app_cred_id, access_token)
         self._populate_audit_info(token_data, audit_info)
 
         if include_catalog:
-            self._populate_service_catalog(token_data, user_id, domain_id,
-                                           project_id, trust)
+            self._populate_service_catalog(
+                token_data, user_id, system, domain_id, project_id, trust
+            )
         self._populate_service_providers(token_data)
+        self._validate_identity_provider(token_data)
         self._populate_token_dates(token_data, expires=expires,
                                    issued_at=issued_at)
         self._populate_oauth_section(token_data, access_token)
+        self._populate_app_cred(token_data, app_cred_id)
         return {'token': token_data}
 
 
-@dependency.requires('catalog_api', 'identity_api', 'oauth_api',
-                     'resource_api', 'role_api', 'trust_api')
-class BaseProvider(base.Provider):
+class BaseProvider(provider_api.ProviderAPIMixin, base.Provider):
     def __init__(self, *args, **kwargs):
         super(BaseProvider, self).__init__(*args, **kwargs)
         self.v3_token_data_helper = V3TokenDataHelper()
@@ -456,9 +560,9 @@ class BaseProvider(base.Provider):
                 federation_constants.PROTOCOL in auth_context)
 
     def issue_token(self, user_id, method_names, expires_at=None,
-                    project_id=None, domain_id=None, auth_context=None,
-                    trust=None, include_catalog=True,
-                    parent_audit_id=None):
+                    system=None, project_id=None, domain_id=None,
+                    auth_context=None, trust=None, app_cred_id=None,
+                    include_catalog=True, parent_audit_id=None):
         if auth_context and auth_context.get('bind'):
             # NOTE(lbragstad): Check if the token provider being used actually
             # supports bind authentication methods before proceeding.
@@ -479,15 +583,19 @@ class BaseProvider(base.Provider):
         access_token = None
         if 'oauth1' in method_names:
             access_token_id = auth_context['access_token_id']
-            access_token = self.oauth_api.get_access_token(access_token_id)
+            access_token = PROVIDERS.oauth_api.get_access_token(
+                access_token_id
+            )
 
         token_data = self.v3_token_data_helper.get_token_data(
             user_id,
             method_names,
+            system=system,
             domain_id=domain_id,
             project_id=project_id,
             expires=expires_at,
             trust=trust,
+            app_cred_id=app_cred_id,
             bind=auth_context.get('bind') if auth_context else None,
             token=token_ref,
             include_catalog=include_catalog,
@@ -503,7 +611,7 @@ class BaseProvider(base.Provider):
         idp = auth_context[federation_constants.IDENTITY_PROVIDER]
         protocol = auth_context[federation_constants.PROTOCOL]
 
-        user_dict = self.identity_api.get_user(user_id)
+        user_dict = PROVIDERS.identity_api.get_user(user_id)
         user_name = user_dict['name']
 
         token_data = {
@@ -522,6 +630,7 @@ class BaseProvider(base.Provider):
             }
         }
 
+        # FIXME(lbragstad): This will have to account for system-scoping, too.
         if project_id or domain_id:
             self.v3_token_data_helper.populate_roles_for_federated_user(
                 token_data, group_ids, project_id, domain_id, user_id)
@@ -535,76 +644,50 @@ class BaseProvider(base.Provider):
         return token_ref
 
     def validate_token(self, token_id):
-        if self.needs_persistence():
-            token_ref = token_id
-            token_data = token_ref.get('token_data')
-            user_id = token_ref['user_id']
-            methods = token_data['token']['methods']
-            bind = token_data['token'].get('bind')
-            issued_at = token_data['token']['issued_at']
-            expires_at = token_data['token']['expires_at']
-            audit_ids = token_data['token'].get('audit_ids')
-            domain_id = token_data['token'].get('domain', {}).get('id')
-            project_id = token_data['token'].get('project', {}).get('id')
-            access_token = None
-            if token_data['token'].get('OS-OAUTH1'):
-                access_token = {
-                    'id': token_data['token'].get('OS-OAUTH1', {}).get(
-                        'access_token_id'
-                    ),
-                    'consumer_id': token_data['token'].get(
-                        'OS-OAUTH1', {}
-                    ).get('consumer_id')
-                }
-            trust_ref = None
-            trust_id = token_ref.get('trust_id')
-            if trust_id:
-                trust_ref = self.trust_api.get_trust(trust_id)
-            token_dict = None
-            if token_data['token']['user'].get(
-                    federation_constants.FEDERATION):
-                token_dict = {'user': token_ref['user']}
-        else:
-            try:
-                (user_id, methods, audit_ids, domain_id, project_id, trust_id,
-                    federated_info, access_token_id, issued_at, expires_at) = (
-                        self.token_formatter.validate_token(token_id))
-            except exception.ValidationError as e:
-                raise exception.TokenNotFound(e)
+        try:
+            (user_id, methods, audit_ids, system, domain_id,
+                project_id, trust_id, federated_info, access_token_id,
+                app_cred_id, issued_at, expires_at) = (
+                    self.token_formatter.validate_token(token_id))
+        except exception.ValidationError as e:
+            raise exception.TokenNotFound(e)
 
-            bind = None
-            token_dict = None
-            trust_ref = None
-            if federated_info:
-                # NOTE(lbragstad): We need to rebuild information about the
-                # federated token as well as the federated token roles. This is
-                # because when we validate a non-persistent token, we don't
-                # have a token reference to pull the federated token
-                # information out of.  As a result, we have to extract it from
-                # the token itself and rebuild the federated context. These
-                # private methods currently live in the
-                # keystone.token.providers.fernet.Provider() class.
-                token_dict = self._rebuild_federated_info(
-                    federated_info, user_id
+        bind = None
+        token_dict = None
+        trust_ref = None
+        if federated_info:
+            # NOTE(lbragstad): We need to rebuild information about the
+            # federated token as well as the federated token roles. This is
+            # because when we validate a non-persistent token, we don't
+            # have a token reference to pull the federated token
+            # information out of.  As a result, we have to extract it from
+            # the token itself and rebuild the federated context. These
+            # private methods currently live in the
+            # keystone.token.providers.fernet.Provider() class.
+            token_dict = self._rebuild_federated_info(
+                federated_info, user_id
+            )
+            if project_id or domain_id:
+                self._rebuild_federated_token_roles(
+                    token_dict,
+                    federated_info,
+                    user_id,
+                    project_id,
+                    domain_id
                 )
-                if project_id or domain_id:
-                    self._rebuild_federated_token_roles(
-                        token_dict,
-                        federated_info,
-                        user_id,
-                        project_id,
-                        domain_id
-                    )
-            if trust_id:
-                trust_ref = self.trust_api.get_trust(trust_id)
+        if trust_id:
+            trust_ref = PROVIDERS.trust_api.get_trust(trust_id)
 
-            access_token = None
-            if access_token_id:
-                access_token = self.oauth_api.get_access_token(access_token_id)
+        access_token = None
+        if access_token_id:
+            access_token = PROVIDERS.oauth_api.get_access_token(
+                access_token_id
+            )
 
         return self.v3_token_data_helper.get_token_data(
             user_id,
             method_names=methods,
+            system=system,
             domain_id=domain_id,
             project_id=project_id,
             issued_at=issued_at,
@@ -613,4 +696,5 @@ class BaseProvider(base.Provider):
             token=token_dict,
             bind=bind,
             access_token=access_token,
-            audit_info=audit_ids)
+            audit_info=audit_ids,
+            app_cred_id=app_cred_id)

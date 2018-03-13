@@ -18,9 +18,9 @@ import six
 from keystone import assignment
 from keystone.common import cache
 from keystone.common import clean
-from keystone.common import dependency
 from keystone.common import driver_hints
 from keystone.common import manager
+from keystone.common import provider_api
 from keystone.common import utils
 import keystone.conf
 from keystone import exception
@@ -33,13 +33,12 @@ from keystone.token import provider as token_provider
 CONF = keystone.conf.CONF
 LOG = log.getLogger(__name__)
 MEMOIZE = cache.get_memoization_decorator(group='resource')
+PROVIDERS = provider_api.ProviderAPIs
+
 
 TAG_SEARCH_FILTERS = ('tags', 'tags-any', 'not-tags', 'not-tags-any')
 
 
-@dependency.provider('resource_api')
-@dependency.requires('assignment_api', 'credential_api', 'domain_config_api',
-                     'identity_api', 'trust_api')
 class Manager(manager.Manager):
     """Default pivot point for the Resource backend.
 
@@ -49,6 +48,7 @@ class Manager(manager.Manager):
     """
 
     driver_namespace = 'keystone.resource'
+    _provides_api = 'resource_api'
 
     _DOMAIN = 'domain'
     _PROJECT = 'project'
@@ -60,7 +60,9 @@ class Manager(manager.Manager):
         # SQL Identity in some form. Even if SQL Identity is not used, there
         # is almost no reason to have non-SQL Resource. Keystone requires
         # SQL in a number of ways, this simply codifies it plainly for resource
+        # the driver_name = None simply implies we don't need to load a driver.
         self.driver = resource_sql.Resource()
+        super(Manager, self).__init__(driver_name=None)
 
     def _get_hierarchy_depth(self, parents_list):
         return len(parents_list) + 1
@@ -90,7 +92,7 @@ class Manager(manager.Manager):
         :raises keystone.exception.ValidationError: If one of the constraints
             was not satisfied.
         """
-        if (not self.identity_api.multiple_domains_supported and
+        if (not PROVIDERS.identity_api.multiple_domains_supported and
                 project_ref['id'] != CONF.identity.default_domain_id):
             raise exception.ValidationError(
                 message=_('Multiple domains are not supported'))
@@ -425,29 +427,19 @@ class Manager(manager.Manager):
 
         return ret
 
-    def _pre_delete_cleanup_project(self, project_id):
-        project_user_ids = (
-            self.assignment_api.list_user_ids_for_project(project_id))
-        for user_id in project_user_ids:
-            payload = {'user_id': user_id, 'project_id': project_id}
-            notifications.Audit.internal(
-                notifications.INVALIDATE_USER_PROJECT_TOKEN_PERSISTENCE,
-                payload
-            )
-
     def _post_delete_cleanup_project(self, project_id, project,
                                      initiator=None):
         try:
             self.get_project.invalidate(self, project_id)
             self.get_project_by_name.invalidate(self, project['name'],
                                                 project['domain_id'])
-            self.assignment_api.delete_project_assignments(project_id)
+            PROVIDERS.assignment_api.delete_project_assignments(project_id)
             # Invalidate user role assignments cache region, as it may
             # be caching role assignments where the target is
             # the specified project
             assignment.COMPUTED_ASSIGNMENTS_REGION.invalidate()
-            self.credential_api.delete_credentials_for_project(project_id)
-            self.trust_api.delete_trusts_for_project(project_id)
+            PROVIDERS.credential_api.delete_credentials_for_project(project_id)
+            PROVIDERS.trust_api.delete_trusts_for_project(project_id)
         finally:
             # attempt to send audit event even if the cache invalidation raises
             notifications.Audit.deleted(self._PROJECT, project_id, initiator)
@@ -499,20 +491,26 @@ class Manager(manager.Manager):
             project_list = subtree_list + [project]
             projects_ids = [x['id'] for x in project_list]
 
-            for prj in project_list:
-                self._pre_delete_cleanup_project(prj['id'])
             ret = self.driver.delete_projects_from_ids(projects_ids)
             for prj in project_list:
                 self._post_delete_cleanup_project(prj['id'], prj, initiator)
         else:
-            self._pre_delete_cleanup_project(project_id)
             ret = self.driver.delete_project(project_id)
             self._post_delete_cleanup_project(project_id, project, initiator)
 
+        reason = (
+            'The token cache is being invalidate because project '
+            '%(project_id)s was deleted. Authorization will be recalculated '
+            'and enforced accordingly the next time users authenticate or '
+            'validate a token.' % {'project_id': project_id}
+        )
+        notifications.invalidate_token_cache_notification(reason)
         return ret
 
     def _filter_projects_list(self, projects_list, user_id):
-        user_projects = self.assignment_api.list_projects_for_user(user_id)
+        user_projects = PROVIDERS.assignment_api.list_projects_for_user(
+            user_id
+        )
         user_projects_ids = set([proj['id'] for proj in user_projects])
         # Keep only the projects present in user_projects
         return [proj for proj in projects_list
@@ -769,13 +767,16 @@ class Manager(manager.Manager):
                   'first.'))
 
         self._delete_domain_contents(domain_id)
+        notifications.Audit.internal(
+            notifications.DOMAIN_DELETED, domain_id
+        )
         self._delete_project(domain_id, initiator)
         try:
             self.get_domain.invalidate(self, domain_id)
             self.get_domain_by_name.invalidate(self, domain['name'])
             # Delete any database stored domain config
-            self.domain_config_api.delete_config_options(domain_id)
-            self.domain_config_api.release_registration(domain_id)
+            PROVIDERS.domain_config_api.delete_config_options(domain_id)
+            PROVIDERS.domain_config_api.release_registration(domain_id)
         finally:
             # attempt to send audit event even if the cache invalidation raises
             notifications.Audit.deleted(self._DOMAIN, domain_id, initiator)
@@ -946,7 +947,6 @@ class Manager(manager.Manager):
 MEMOIZE_CONFIG = cache.get_memoization_decorator(group='domain_config')
 
 
-@dependency.provider('domain_config_api')
 class DomainConfigManager(manager.Manager):
     """Default pivot point for the Domain Config backend."""
 
@@ -960,6 +960,7 @@ class DomainConfigManager(manager.Manager):
     # the identity manager are supported.
 
     driver_namespace = 'keystone.resource.domain_config'
+    _provides_api = 'domain_config_api'
 
     # We explicitly state each whitelisted option instead of pulling all ldap
     # options from CONF and selectively pruning them to prevent a security

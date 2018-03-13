@@ -35,6 +35,17 @@ def init():
         register_rules(_ENFORCER)
 
 
+def get_enforcer():
+    # Here we pass an empty list of arguments because there aren't any
+    # arguments that oslo.config or oslo.policy shouldn't already understand
+    # from the CONF object. This makes things easier here because we don't have
+    # to parse arguments passed in from the command line and remove unexpected
+    # arguments before building a Config object.
+    CONF([], project='keystone')
+    init()
+    return _ENFORCER
+
+
 def enforce(credentials, action, target, do_raise=True):
     """Verify that the action is valid on the target in this context.
 
@@ -60,7 +71,10 @@ def enforce(credentials, action, target, do_raise=True):
         extra.update(exc=exception.ForbiddenAction, action=action,
                      do_raise=do_raise)
 
-    return _ENFORCER.enforce(action, target, credentials, **extra)
+    try:
+        return _ENFORCER.enforce(action, target, credentials, **extra)
+    except common_policy.InvalidScope:
+        raise exception.ForbiddenAction(action=action)
 
 
 def register_rules(enforcer):

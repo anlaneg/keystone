@@ -41,13 +41,14 @@ import testtools
 from testtools import testcase
 
 from keystone.common import context
-from keystone.common import dependency
+from keystone.common import provider_api
 from keystone.common import request
 from keystone.common import sql
 import keystone.conf
 from keystone import exception
 from keystone.identity.backends.ldap import common as ks_ldap
 from keystone import notifications
+from keystone.resource.backends import base as resource_base
 from keystone.tests.unit import ksfixtures
 from keystone.version import controllers
 from keystone.version import service
@@ -74,6 +75,7 @@ def _calc_tmpdir():
 TMPDIR = _calc_tmpdir()
 
 CONF = keystone.conf.CONF
+PROVIDERS = provider_api.ProviderAPIs
 log.register_options(CONF)
 
 IN_MEM_DB_CONN_STRING = 'sqlite://'
@@ -461,6 +463,29 @@ def new_trust_ref(trustor_user_id, trustee_user_id, project_id=None,
     return ref
 
 
+def new_registered_limit_ref(**kwargs):
+    ref = {
+        'service_id': uuid.uuid4().hex,
+        'resource_name': uuid.uuid4().hex,
+        'default_limit': 10
+    }
+
+    ref.update(kwargs)
+    return ref
+
+
+def new_limit_ref(**kwargs):
+    ref = {
+        'project_id': uuid.uuid4().hex,
+        'service_id': uuid.uuid4().hex,
+        'resource_name': uuid.uuid4().hex,
+        'resource_limit': 10
+    }
+
+    ref.update(kwargs)
+    return ref
+
+
 def create_user(api, domain_id, **kwargs):
     """Create a user via the API. Keep the created password.
 
@@ -677,7 +702,7 @@ class TestCase(BaseTestCase):
 
         # Clear the registry of providers so that providers from previous
         # tests aren't used.
-        self.addCleanup(dependency.reset)
+        self.addCleanup(provider_api.ProviderAPIs._clear_registry_instances)
 
         # Ensure Notification subscriptions and resource types are empty
         self.addCleanup(notifications.clear_subscribers)
@@ -691,9 +716,13 @@ class TestCase(BaseTestCase):
 
     def load_backends(self):
         """Initialize each manager and assigns them to an attribute."""
+        # TODO(morgan): Ensure our tests only ever call load_backends
+        # a single time via this method. for now just clear the registry
+        # if we are reloading.
+        provider_api.ProviderAPIs._clear_registry_instances()
         self.useFixture(ksfixtures.BackendLoader(self))
 
-    def load_fixtures(self, fixtures):
+    def load_fixtures(self, fixtures, enable_sqlite_foreign_key=False):
         """Hacky basic and naive fixture loading based on a python module.
 
         Expects that the various APIs into the various services are already
@@ -709,21 +738,27 @@ class TestCase(BaseTestCase):
         if (hasattr(self, 'identity_api') and
             hasattr(self, 'assignment_api') and
                 hasattr(self, 'resource_api')):
+            # TODO(wxy): Once all test enable FKs, remove
+            # ``enable_sqlite_foreign_key`` and create the root domain by
+            # default.
+            if enable_sqlite_foreign_key:
+                self.resource_api.create_domain(resource_base.NULL_DOMAIN_ID,
+                                                fixtures.ROOT_DOMAIN)
             for domain in fixtures.DOMAINS:
-                rv = self.resource_api.create_domain(domain['id'], domain)
+                rv = PROVIDERS.resource_api.create_domain(domain['id'], domain)
                 attrname = 'domain_%s' % domain['id']
                 setattr(self, attrname, rv)
                 fixtures_to_cleanup.append(attrname)
 
             for tenant in fixtures.TENANTS:
                 tenant_attr_name = 'tenant_%s' % tenant['name'].lower()
-                rv = self.resource_api.create_project(
+                rv = PROVIDERS.resource_api.create_project(
                     tenant['id'], tenant)
                 setattr(self, tenant_attr_name, rv)
                 fixtures_to_cleanup.append(tenant_attr_name)
 
             for role in fixtures.ROLES:
-                rv = self.role_api.create_role(role['id'], role)
+                rv = PROVIDERS.role_api.create_role(role['id'], role)
                 attrname = 'role_%s' % role['name']
                 setattr(self, attrname, rv)
                 fixtures_to_cleanup.append(attrname)
@@ -733,15 +768,17 @@ class TestCase(BaseTestCase):
                 tenants = user_copy.pop('tenants')
 
                 # For users, the manager layer will generate the ID
-                user_copy = self.identity_api.create_user(user_copy)
+                user_copy = PROVIDERS.identity_api.create_user(user_copy)
                 # Our tests expect that the password is still in the user
                 # record so that they can reference it, so put it back into
                 # the dict returned.
                 user_copy['password'] = user['password']
 
+                # fixtures.ROLES[2] is the _member_ role.
                 for tenant_id in tenants:
-                    self.assignment_api.add_user_to_project(
-                        tenant_id, user_copy['id'])
+                    PROVIDERS.assignment_api.add_role_to_user_and_project(
+                        user_copy['id'], tenant_id, fixtures.ROLES[2]['id'])
+
                 # Use the ID from the fixture as the attribute name, so
                 # that our tests can easily reference each user dict, while
                 # the ID in the dict will be the real public ID.
@@ -754,7 +791,7 @@ class TestCase(BaseTestCase):
                 user = role_assignment['user']
                 tenant_id = role_assignment['tenant_id']
                 user_id = getattr(self, 'user_%s' % user)['id']
-                self.assignment_api.add_role_to_user_and_project(
+                PROVIDERS.assignment_api.add_role_to_user_and_project(
                     user_id, tenant_id, role_id)
 
             self.addCleanup(self.cleanup_instance(*fixtures_to_cleanup))

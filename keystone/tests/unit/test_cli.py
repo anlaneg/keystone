@@ -37,7 +37,7 @@ from keystone.cmd.doctor import ldap
 from keystone.cmd.doctor import security_compliance
 from keystone.cmd.doctor import tokens
 from keystone.cmd.doctor import tokens_fernet
-from keystone.common import dependency
+from keystone.common import provider_api
 from keystone.common.sql import upgrades
 import keystone.conf
 from keystone import exception
@@ -50,18 +50,7 @@ from keystone.tests.unit.ksfixtures import ldapdb
 
 
 CONF = keystone.conf.CONF
-
-
-class CliTestCase(unit.SQLDriverOverrides, unit.TestCase):
-    def config_files(self):
-        config_files = super(CliTestCase, self).config_files()
-        config_files.append(unit.dirs.tests_conf('backend_sql.conf'))
-        return config_files
-
-    def test_token_flush(self):
-        self.useFixture(database.Database())
-        self.load_backends()
-        cli.TokenFlush.main()
+PROVIDERS = provider_api.ProviderAPIs
 
 
 class CliNoConfigTestCase(unit.BaseTestCase):
@@ -125,6 +114,13 @@ class CliBootStrapTestCase(unit.SQLDriverOverrides, unit.TestCase):
                 project['id']))
         self.assertIs(1, len(role_list))
         self.assertEqual(role_list[0], role['id'])
+        system_roles = (
+            bootstrap.assignment_manager.list_system_grants_for_user(
+                user['id']
+            )
+        )
+        self.assertIs(1, len(system_roles))
+        self.assertEqual(system_roles[0]['id'], role['id'])
         # NOTE(morganfainberg): Pass an empty context, it isn't used by
         # `authenticate` method.
         bootstrap.identity_manager.authenticate(
@@ -246,19 +242,6 @@ class CliBootStrapTestCase(unit.SQLDriverOverrides, unit.TestCase):
             self.make_request(),
             user_id,
             bootstrap.password)
-
-    def test_bootstrap_creates_default_role(self):
-        bootstrap = cli.BootStrap()
-        try:
-            role = bootstrap.role_manager.get_role(CONF.member_role_id)
-            self.fail('Member Role is created and should not be.')
-        except exception.RoleNotFound:
-            pass
-
-        self._do_test_bootstrap(bootstrap)
-        role = bootstrap.role_manager.get_role(CONF.member_role_id)
-        self.assertEqual(role['name'], CONF.member_role_name)
-        self.assertEqual(role['id'], CONF.member_role_id)
 
 
 class CliBootStrapTestCaseWithEnvironment(CliBootStrapTestCase):
@@ -404,13 +387,15 @@ class CliDomainConfigAllTestCase(unit.SQLDriverOverrides, unit.TestCase):
             if domain == 'domain_default':
                 # Not allowed to delete the default domain, but should at least
                 # delete any domain-specific config for it.
-                self.domain_config_api.delete_config(
+                PROVIDERS.domain_config_api.delete_config(
                     CONF.identity.default_domain_id)
                 continue
             this_domain = self.domains[domain]
             this_domain['enabled'] = False
-            self.resource_api.update_domain(this_domain['id'], this_domain)
-            self.resource_api.delete_domain(this_domain['id'])
+            PROVIDERS.resource_api.update_domain(
+                this_domain['id'], this_domain
+            )
+            PROVIDERS.resource_api.delete_domain(this_domain['id'])
         self.domains = {}
 
     def config(self, config_files):
@@ -420,7 +405,7 @@ class CliDomainConfigAllTestCase(unit.SQLDriverOverrides, unit.TestCase):
     def setup_initial_domains(self):
 
         def create_domain(domain):
-            return self.resource_api.create_domain(domain['id'], domain)
+            return PROVIDERS.resource_api.create_domain(domain['id'], domain)
 
         self.domains = {}
         self.addCleanup(self.cleanup_domains)
@@ -463,16 +448,16 @@ class CliDomainConfigAllTestCase(unit.SQLDriverOverrides, unit.TestCase):
         }
 
         # Clear backend dependencies, since cli loads these manually
-        dependency.reset()
+        provider_api.ProviderAPIs._clear_registry_instances()
         cli.DomainConfigUpload.main()
 
-        res = self.domain_config_api.get_config_with_sensitive_info(
+        res = PROVIDERS.domain_config_api.get_config_with_sensitive_info(
             CONF.identity.default_domain_id)
         self.assertEqual(default_config, res)
-        res = self.domain_config_api.get_config_with_sensitive_info(
+        res = PROVIDERS.domain_config_api.get_config_with_sensitive_info(
             self.domains['domain1']['id'])
         self.assertEqual(domain1_config, res)
-        res = self.domain_config_api.get_config_with_sensitive_info(
+        res = PROVIDERS.domain_config_api.get_config_with_sensitive_info(
             self.domains['domain2']['id'])
         self.assertEqual(domain2_config, res)
 
@@ -495,16 +480,16 @@ class CliDomainConfigSingleDomainTestCase(CliDomainConfigAllTestCase):
         }
 
         # Clear backend dependencies, since cli loads these manually
-        dependency.reset()
+        provider_api.ProviderAPIs._clear_registry_instances()
         cli.DomainConfigUpload.main()
 
-        res = self.domain_config_api.get_config_with_sensitive_info(
+        res = PROVIDERS.domain_config_api.get_config_with_sensitive_info(
             CONF.identity.default_domain_id)
         self.assertEqual(default_config, res)
-        res = self.domain_config_api.get_config_with_sensitive_info(
+        res = PROVIDERS.domain_config_api.get_config_with_sensitive_info(
             self.domains['domain1']['id'])
         self.assertEqual({}, res)
-        res = self.domain_config_api.get_config_with_sensitive_info(
+        res = PROVIDERS.domain_config_api.get_config_with_sensitive_info(
             self.domains['domain2']['id'])
         self.assertEqual({}, res)
 
@@ -514,12 +499,12 @@ class CliDomainConfigSingleDomainTestCase(CliDomainConfigAllTestCase):
             'ldap': {'url': uuid.uuid4().hex},
             'identity': {'driver': 'ldap'}
         }
-        self.domain_config_api.create_config(
+        PROVIDERS.domain_config_api.create_config(
             CONF.identity.default_domain_id, default_config)
 
         # Now try and upload the settings in the configuration file for the
         # default domain
-        dependency.reset()
+        provider_api.ProviderAPIs._clear_registry_instances()
         with mock.patch('six.moves.builtins.print') as mock_print:
             self.assertRaises(unit.UnexpectedExit, cli.DomainConfigUpload.main)
             file_name = ('keystone.%s.conf' % self.default_domain['name'])
@@ -531,7 +516,7 @@ class CliDomainConfigSingleDomainTestCase(CliDomainConfigAllTestCase):
                                          file_name)}
             mock_print.assert_has_calls([mock.call(error_msg)])
 
-        res = self.domain_config_api.get_config(
+        res = PROVIDERS.domain_config_api.get_config(
             CONF.identity.default_domain_id)
         # The initial config should not have been overwritten
         self.assertEqual(default_config, res)
@@ -544,7 +529,7 @@ class CliDomainConfigNoOptionsTestCase(CliDomainConfigAllTestCase):
              project='keystone', default_config_files=config_files)
 
     def test_config_upload(self):
-        dependency.reset()
+        provider_api.ProviderAPIs._clear_registry_instances()
         with mock.patch('six.moves.builtins.print') as mock_print:
             self.assertRaises(unit.UnexpectedExit, cli.DomainConfigUpload.main)
             mock_print.assert_has_calls(
@@ -561,7 +546,7 @@ class CliDomainConfigTooManyOptionsTestCase(CliDomainConfigAllTestCase):
              project='keystone', default_config_files=config_files)
 
     def test_config_upload(self):
-        dependency.reset()
+        provider_api.ProviderAPIs._clear_registry_instances()
         with mock.patch('six.moves.builtins.print') as mock_print:
             self.assertRaises(unit.UnexpectedExit, cli.DomainConfigUpload.main)
             mock_print.assert_has_calls(
@@ -578,7 +563,7 @@ class CliDomainConfigInvalidDomainTestCase(CliDomainConfigAllTestCase):
              project='keystone', default_config_files=config_files)
 
     def test_config_upload(self):
-        dependency.reset()
+        provider_api.ProviderAPIs._clear_registry_instances()
         with mock.patch('six.moves.builtins.print') as mock_print:
             self.assertRaises(unit.UnexpectedExit, cli.DomainConfigUpload.main)
             file_name = 'keystone.%s.conf' % self.invalid_domain_name
@@ -732,17 +717,20 @@ class TestMappingPopulate(unit.SQLDriverOverrides, unit.TestCase):
         # 3. Execute mapping_populate. It should create id mappings
         # 4. For the same users verify that they have public_id now
         purge_filter = {}
-        self.id_mapping_api.purge_mappings(purge_filter)
+        PROVIDERS.id_mapping_api.purge_mappings(purge_filter)
         hints = None
-        users = self.identity_api.driver.list_users(hints)
+        users = PROVIDERS.identity_api.driver.list_users(hints)
         for user in users:
             local_entity = {
                 'domain_id': CONF.identity.default_domain_id,
                 'local_id': user['id'],
                 'entity_type': identity_mapping.EntityType.USER}
-            self.assertIsNone(self.id_mapping_api.get_public_id(local_entity))
+            self.assertIsNone(
+                PROVIDERS.id_mapping_api.get_public_id(local_entity)
+            )
 
-        dependency.reset()  # backends are loaded again in the command handler
+        # backends are loaded again in the command handler
+        provider_api.ProviderAPIs._clear_registry_instances()
         cli.MappingPopulate.main()
 
         for user in users:
@@ -751,12 +739,13 @@ class TestMappingPopulate(unit.SQLDriverOverrides, unit.TestCase):
                 'local_id': user['id'],
                 'entity_type': identity_mapping.EntityType.USER}
             self.assertIsNotNone(
-                self.id_mapping_api.get_public_id(local_entity))
+                PROVIDERS.id_mapping_api.get_public_id(local_entity))
 
     def test_bad_domain_name(self):
         CONF(args=['mapping_populate', '--domain-name', uuid.uuid4().hex],
              project='keystone')
-        dependency.reset()  # backends are loaded again in the command handler
+        # backends are loaded again in the command handler
+        provider_api.ProviderAPIs._clear_registry_instances()
         # NOTE: assertEqual is used on purpose. assertFalse passes with None.
         self.assertEqual(False, cli.MappingPopulate.main())
 
@@ -852,7 +841,7 @@ class CredentialDoctorTests(unit.TestCase):
     def test_usability_of_cred_fernet_key_repo_raised(self, mock_utils):
         # Symptom Detected: credential fernet key repository is world readable
         self.config_fixture.config(group='credential', provider='fernet')
-        mock_utils.FernetUtils().validate_key_repository.return_value = False
+        mock_utils.TokenUtils().validate_key_repository.return_value = False
         self.assertTrue(
             credential.symptom_usability_of_credential_fernet_key_repository())
 
@@ -860,13 +849,13 @@ class CredentialDoctorTests(unit.TestCase):
     def test_usability_of_cred_fernet_key_repo_not_raised(self, mock_utils):
         # No Symptom Detected: Custom driver is used
         self.config_fixture.config(group='credential', provider='my-driver')
-        mock_utils.FernetUtils().validate_key_repository.return_value = True
+        mock_utils.TokenUtils().validate_key_repository.return_value = True
         self.assertFalse(
             credential.symptom_usability_of_credential_fernet_key_repository())
 
         # No Symptom Detected: key repository is not world readable
         self.config_fixture.config(group='credential', provider='fernet')
-        mock_utils.FernetUtils().validate_key_repository.return_value = True
+        mock_utils.TokenUtils().validate_key_repository.return_value = True
         self.assertFalse(
             credential.symptom_usability_of_credential_fernet_key_repository())
 
@@ -874,7 +863,7 @@ class CredentialDoctorTests(unit.TestCase):
     def test_keys_in_credential_fernet_key_repository_raised(self, mock_utils):
         # Symptom Detected: Key repo is empty
         self.config_fixture.config(group='credential', provider='fernet')
-        mock_utils.FernetUtils().load_keys.return_value = False
+        mock_utils.TokenUtils().load_keys.return_value = False
         self.assertTrue(
             credential.symptom_keys_in_credential_fernet_key_repository())
 
@@ -883,13 +872,13 @@ class CredentialDoctorTests(unit.TestCase):
             self, mock_utils):
         # No Symptom Detected: Custom driver is used
         self.config_fixture.config(group='credential', provider='my-driver')
-        mock_utils.FernetUtils().load_keys.return_value = True
+        mock_utils.TokenUtils().load_keys.return_value = True
         self.assertFalse(
             credential.symptom_keys_in_credential_fernet_key_repository())
 
         # No Symptom Detected: Key repo is not empty, fernet is current driver
         self.config_fixture.config(group='credential', provider='fernet')
-        mock_utils.FernetUtils().load_keys.return_value = True
+        mock_utils.TokenUtils().load_keys.return_value = True
         self.assertFalse(
             credential.symptom_keys_in_credential_fernet_key_repository())
 
@@ -1273,7 +1262,7 @@ class TokenFernetDoctorTests(unit.TestCase):
     def test_usability_of_Fernet_key_repository_raised(self, mock_utils):
         # Symptom Detected: Fernet key repo is world readable
         self.config_fixture.config(group='token', provider='fernet')
-        mock_utils.FernetUtils().validate_key_repository.return_value = False
+        mock_utils.TokenUtils().validate_key_repository.return_value = False
         self.assertTrue(
             tokens_fernet.symptom_usability_of_Fernet_key_repository())
 
@@ -1281,14 +1270,14 @@ class TokenFernetDoctorTests(unit.TestCase):
     def test_usability_of_Fernet_key_repository_not_raised(self, mock_utils):
         # No Symptom Detected: UUID is used instead of fernet
         self.config_fixture.config(group='token', provider='uuid')
-        mock_utils.FernetUtils().validate_key_repository.return_value = False
+        mock_utils.TokenUtils().validate_key_repository.return_value = False
         self.assertFalse(
             tokens_fernet.symptom_usability_of_Fernet_key_repository())
 
         # No Symptom Detected: configs set properly, key repo is not world
         # readable but is user readable
         self.config_fixture.config(group='token', provider='fernet')
-        mock_utils.FernetUtils().validate_key_repository.return_value = True
+        mock_utils.TokenUtils().validate_key_repository.return_value = True
         self.assertFalse(
             tokens_fernet.symptom_usability_of_Fernet_key_repository())
 
@@ -1296,7 +1285,7 @@ class TokenFernetDoctorTests(unit.TestCase):
     def test_keys_in_Fernet_key_repository_raised(self, mock_utils):
         # Symptom Detected: Fernet key repository is empty
         self.config_fixture.config(group='token', provider='fernet')
-        mock_utils.FernetUtils().load_keys.return_value = False
+        mock_utils.TokenUtils().load_keys.return_value = False
         self.assertTrue(
             tokens_fernet.symptom_keys_in_Fernet_key_repository())
 
@@ -1304,14 +1293,14 @@ class TokenFernetDoctorTests(unit.TestCase):
     def test_keys_in_Fernet_key_repository_not_raised(self, mock_utils):
         # No Symptom Detected: UUID is used instead of fernet
         self.config_fixture.config(group='token', provider='uuid')
-        mock_utils.FernetUtils().load_keys.return_value = True
+        mock_utils.TokenUtils().load_keys.return_value = True
         self.assertFalse(
             tokens_fernet.symptom_usability_of_Fernet_key_repository())
 
         # No Symptom Detected: configs set properly, key repo has been
         # populated with keys
         self.config_fixture.config(group='token', provider='fernet')
-        mock_utils.FernetUtils().load_keys.return_value = True
+        mock_utils.TokenUtils().load_keys.return_value = True
         self.assertFalse(
             tokens_fernet.symptom_usability_of_Fernet_key_repository())
 

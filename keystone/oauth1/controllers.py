@@ -22,7 +22,7 @@ from six.moves.urllib import parse as urlparse
 
 from keystone.common import authorization
 from keystone.common import controller
-from keystone.common import dependency
+from keystone.common import provider_api
 from keystone.common import validation
 from keystone.common import wsgi
 import keystone.conf
@@ -36,20 +36,9 @@ from keystone.oauth1 import validator
 
 CONF = keystone.conf.CONF
 LOG = log.getLogger(__name__)
+PROVIDERS = provider_api.ProviderAPIs
 
 
-def _emit_user_oauth_consumer_token_invalidate(payload):
-    # This is a special case notification that expect the payload to be a dict
-    # containing the user_id and the consumer_id. This is so that the token
-    # provider can invalidate any tokens in the token persistence if
-    # token persistence is enabled
-    notifications.Audit.internal(
-        notifications.INVALIDATE_USER_OAUTH_CONSUMER_TOKENS,
-        payload,
-    )
-
-
-@dependency.requires('oauth_api', 'token_provider_api')
 class ConsumerCrudV3(controller.V3Controller):
     collection_name = 'consumers'
     member_name = 'consumer'
@@ -66,7 +55,7 @@ class ConsumerCrudV3(controller.V3Controller):
     def create_consumer(self, request, consumer):
         validation.lazy_validate(schema.consumer_create, consumer)
         ref = self._assign_unique_id(self._normalize_dict(consumer))
-        consumer_ref = self.oauth_api.create_consumer(
+        consumer_ref = PROVIDERS.oauth_api.create_consumer(
             ref, initiator=request.audit_initiator
         )
         return ConsumerCrudV3.wrap_member(request.context_dict, consumer_ref)
@@ -76,33 +65,36 @@ class ConsumerCrudV3(controller.V3Controller):
         validation.lazy_validate(schema.consumer_update, consumer)
         self._require_matching_id(consumer_id, consumer)
         ref = self._normalize_dict(consumer)
-        ref = self.oauth_api.update_consumer(
+        ref = PROVIDERS.oauth_api.update_consumer(
             consumer_id, ref, initiator=request.audit_initiator
         )
         return ConsumerCrudV3.wrap_member(request.context_dict, ref)
 
     @controller.protected()
     def list_consumers(self, request):
-        ref = self.oauth_api.list_consumers()
+        ref = PROVIDERS.oauth_api.list_consumers()
         return ConsumerCrudV3.wrap_collection(request.context_dict, ref)
 
     @controller.protected()
     def get_consumer(self, request, consumer_id):
-        ref = self.oauth_api.get_consumer(consumer_id)
+        ref = PROVIDERS.oauth_api.get_consumer(consumer_id)
         return ConsumerCrudV3.wrap_member(request.context_dict, ref)
 
     @controller.protected()
     def delete_consumer(self, request, consumer_id):
-        user_token_ref = authorization.get_token_ref(request.context_dict)
-        payload = {'user_id': user_token_ref.user_id,
-                   'consumer_id': consumer_id}
-        _emit_user_oauth_consumer_token_invalidate(payload)
-        self.oauth_api.delete_consumer(
+        reason = (
+            'Invalidating token cache because consumer %(consumer_id)s has '
+            'been deleted. Authorization for users with OAuth tokens will be '
+            'recalculated and enforced accordingly the next time they '
+            'authenticate or validate a token.' %
+            {'consumer_id': consumer_id}
+        )
+        notifications.invalidate_token_cache_notification(reason)
+        PROVIDERS.oauth_api.delete_consumer(
             consumer_id, initiator=request.audit_initiator
         )
 
 
-@dependency.requires('oauth_api')
 class AccessTokenCrudV3(controller.V3Controller):
     collection_name = 'access_tokens'
     member_name = 'access_token'
@@ -118,7 +110,7 @@ class AccessTokenCrudV3(controller.V3Controller):
 
     @controller.protected()
     def get_access_token(self, request, user_id, access_token_id):
-        access_token = self.oauth_api.get_access_token(access_token_id)
+        access_token = PROVIDERS.oauth_api.get_access_token(access_token_id)
         if access_token['authorizing_user_id'] != user_id:
             raise exception.NotFound()
         access_token = self._format_token_entity(request.context_dict,
@@ -132,7 +124,7 @@ class AccessTokenCrudV3(controller.V3Controller):
             raise exception.Forbidden(
                 _('Cannot list request tokens'
                   ' with a token issued via delegation.'))
-        refs = self.oauth_api.list_access_tokens(user_id)
+        refs = PROVIDERS.oauth_api.list_access_tokens(user_id)
         formatted_refs = ([self._format_token_entity(request.context_dict, x)
                            for x in refs])
         return AccessTokenCrudV3.wrap_collection(request.context_dict,
@@ -140,11 +132,16 @@ class AccessTokenCrudV3(controller.V3Controller):
 
     @controller.protected()
     def delete_access_token(self, request, user_id, access_token_id):
-        access_token = self.oauth_api.get_access_token(access_token_id)
-        consumer_id = access_token['consumer_id']
-        payload = {'user_id': user_id, 'consumer_id': consumer_id}
-        _emit_user_oauth_consumer_token_invalidate(payload)
-        return self.oauth_api.delete_access_token(
+        access_token = PROVIDERS.oauth_api.get_access_token(access_token_id)
+        reason = (
+            'Invalidating the token cache because an access token for '
+            'consumer %(consumer_id)s has been deleted. Authorization for '
+            'users with OAuth tokens will be recalculated and enforced '
+            'accordingly the next time they authenticate or validate a '
+            'token.' % {'consumer_id': access_token['consumer_id']}
+        )
+        notifications.invalidate_token_cache_notification(reason)
+        return PROVIDERS.oauth_api.delete_access_token(
             user_id, access_token_id, initiator=request.audit_initiator
         )
 
@@ -172,14 +169,13 @@ class AccessTokenCrudV3(controller.V3Controller):
         return formatted_entity
 
 
-@dependency.requires('oauth_api', 'role_api')
 class AccessTokenRolesV3(controller.V3Controller):
     collection_name = 'roles'
     member_name = 'role'
 
     @controller.protected()
     def list_access_token_roles(self, request, user_id, access_token_id):
-        access_token = self.oauth_api.get_access_token(access_token_id)
+        access_token = PROVIDERS.oauth_api.get_access_token(access_token_id)
         if access_token['authorizing_user_id'] != user_id:
             raise exception.NotFound()
         authed_role_ids = access_token['role_ids']
@@ -190,7 +186,7 @@ class AccessTokenRolesV3(controller.V3Controller):
     @controller.protected()
     def get_access_token_role(self, request, user_id,
                               access_token_id, role_id):
-        access_token = self.oauth_api.get_access_token(access_token_id)
+        access_token = PROVIDERS.oauth_api.get_access_token(access_token_id)
         if access_token['authorizing_user_id'] != user_id:
             raise exception.Unauthorized(_('User IDs do not match'))
         authed_role_ids = access_token['role_ids']
@@ -203,7 +199,7 @@ class AccessTokenRolesV3(controller.V3Controller):
         raise exception.RoleNotFound(role_id=role_id)
 
     def _format_role_entity(self, role_id):
-        role = self.role_api.get_role(role_id)
+        role = PROVIDERS.role_api.get_role(role_id)
         formatted_entity = role.copy()
         if 'description' in role:
             formatted_entity.pop('description')
@@ -212,8 +208,6 @@ class AccessTokenRolesV3(controller.V3Controller):
         return formatted_entity
 
 
-@dependency.requires('assignment_api', 'oauth_api',
-                     'resource_api', 'token_provider_api')
 class OAuthControllerV3(controller.V3Controller):
     collection_name = 'not_used'
     member_name = 'not_used'
@@ -237,11 +231,11 @@ class OAuthControllerV3(controller.V3Controller):
                 attribute='oauth_consumer_key', target='request')
         if not requested_project_id:
             raise exception.ValidationError(
-                attribute='requested_project_id', target='request')
+                attribute='Requested-Project-Id', target='request')
 
         # NOTE(stevemar): Ensure consumer and requested project exist
-        self.resource_api.get_project(requested_project_id)
-        self.oauth_api.get_consumer(consumer_id)
+        PROVIDERS.resource_api.get_project(requested_project_id)
+        PROVIDERS.oauth_api.get_consumer(consumer_id)
 
         url = self._update_url_scheme(request)
         req_headers = {'Requested-Project-Id': requested_project_id}
@@ -260,7 +254,7 @@ class OAuthControllerV3(controller.V3Controller):
         # show the details of the failure.
         oauth1.validate_oauth_params(b)
         request_token_duration = CONF.oauth1.request_token_duration
-        token_ref = self.oauth_api.create_request_token(
+        token_ref = PROVIDERS.oauth_api.create_request_token(
             consumer_id,
             requested_project_id,
             request_token_duration,
@@ -299,7 +293,7 @@ class OAuthControllerV3(controller.V3Controller):
             raise exception.ValidationError(
                 attribute='oauth_verifier', target='request')
 
-        req_token = self.oauth_api.get_request_token(
+        req_token = PROVIDERS.oauth_api.get_request_token(
             request_token_id)
 
         expires_at = req_token['expires_at']
@@ -325,7 +319,7 @@ class OAuthControllerV3(controller.V3Controller):
             # does not yet support dummy client or dummy request token,
             # so we will raise Unauthorized exception instead.
             try:
-                self.oauth_api.get_consumer(consumer_id)
+                PROVIDERS.oauth_api.get_consumer(consumer_id)
             except exception.NotFound:
                 msg = _('Provided consumer does not exist.')
                 LOG.warning(msg)
@@ -351,7 +345,7 @@ class OAuthControllerV3(controller.V3Controller):
             raise exception.Unauthorized(message=msg)
 
         access_token_duration = CONF.oauth1.access_token_duration
-        token_ref = self.oauth_api.create_access_token(
+        token_ref = PROVIDERS.oauth_api.create_access_token(
             request_token_id,
             access_token_duration,
             initiator=request.audit_initiator
@@ -374,6 +368,16 @@ class OAuthControllerV3(controller.V3Controller):
 
         return response
 
+    def _normalize_role_list(self, authorize_roles):
+        roles = set()
+        for role in authorize_roles:
+            if role.get('id'):
+                roles.add(role['id'])
+            else:
+                roles.add(PROVIDERS.role_api.get_unique_role_by_name(
+                    role['name'])['id'])
+        return roles
+
     @controller.protected()
     def authorize_request_token(self, request, request_token_id, roles):
         """An authenticated user is going to authorize a request token.
@@ -383,12 +387,13 @@ class OAuthControllerV3(controller.V3Controller):
         there is not another easy way to make sure the user knows which roles
         are being requested before authorizing.
         """
+        validation.lazy_validate(schema.request_token_authorize, roles)
         if request.context.is_delegated_auth:
             raise exception.Forbidden(
                 _('Cannot authorize a request token'
                   ' with a token issued via delegation.'))
 
-        req_token = self.oauth_api.get_request_token(request_token_id)
+        req_token = PROVIDERS.oauth_api.get_request_token(request_token_id)
 
         expires_at = req_token['expires_at']
         if expires_at:
@@ -398,16 +403,13 @@ class OAuthControllerV3(controller.V3Controller):
             if now > expires:
                 raise exception.Unauthorized(_('Request token is expired'))
 
-        # put the roles in a set for easy comparison
-        authed_roles = set()
-        for role in roles:
-            authed_roles.add(role['id'])
+        authed_roles = self._normalize_role_list(roles)
 
         # verify the authorizing user has the roles
         user_token = authorization.get_token_ref(request.context_dict)
         user_id = user_token.user_id
         project_id = req_token['requested_project_id']
-        user_roles = self.assignment_api.get_roles_for_user_and_project(
+        user_roles = PROVIDERS.assignment_api.get_roles_for_user_and_project(
             user_id, project_id)
         cred_set = set(user_roles)
 
@@ -419,7 +421,7 @@ class OAuthControllerV3(controller.V3Controller):
         role_ids = list(authed_roles)
 
         # finally authorize the token
-        authed_token = self.oauth_api.authorize_request_token(
+        authed_token = PROVIDERS.oauth_api.authorize_request_token(
             request_token_id, user_id, role_ids)
 
         to_return = {'token': {'oauth_verifier': authed_token['verifier']}}

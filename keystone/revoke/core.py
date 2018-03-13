@@ -13,8 +13,6 @@
 """Main entry point into the Revoke service."""
 
 from keystone.common import cache
-from keystone.common import dependency
-from keystone.common import extension
 from keystone.common import manager
 import keystone.conf
 from keystone import exception
@@ -25,25 +23,6 @@ from keystone import notifications
 
 CONF = keystone.conf.CONF
 
-
-EXTENSION_DATA = {
-    'name': 'OpenStack Revoke API',
-    'namespace': 'https://docs.openstack.org/identity/api/ext/'
-                 'OS-REVOKE/v1.0',
-    'alias': 'OS-REVOKE',
-    'updated': '2014-02-24T20:51:0-00:00',
-    'description': 'OpenStack revoked token reporting mechanism.',
-    'links': [
-        {
-            'rel': 'describedby',
-            'type': 'text/html',
-            'href': 'https://developer.openstack.org/'
-                    'api-ref-identity-v3-ext.html',
-        }
-    ]}
-extension.register_admin_extension(EXTENSION_DATA['alias'], EXTENSION_DATA)
-extension.register_public_extension(EXTENSION_DATA['alias'], EXTENSION_DATA)
-
 # This builds a discrete cache region dedicated to revoke events. The API can
 # return a filtered list based upon last fetchtime. This is deprecated but
 # must be maintained.
@@ -53,7 +32,6 @@ MEMOIZE = cache.get_memoization_decorator(
     region=REVOKE_REGION)
 
 
-@dependency.provider('revoke_api')
 class Manager(manager.Manager):
     """Default pivot point for the Revoke backend.
 
@@ -65,6 +43,7 @@ class Manager(manager.Manager):
     """
 
     driver_namespace = 'keystone.revoke'
+    _provides_api = 'revoke_api'
 
     def __init__(self):
         super(Manager, self).__init__(CONF.revoke.driver)
@@ -87,11 +66,6 @@ class Manager(manager.Manager):
         self.revoke(
             revoke_model.RevokeEvent(project_id=payload['resource_info']))
 
-    def _domain_callback(self, service, resource_type, operation,
-                         payload):
-        self.revoke(
-            revoke_model.RevokeEvent(domain_id=payload['resource_info']))
-
     def _trust_callback(self, service, resource_type, operation,
                         payload):
         self.revoke(
@@ -111,12 +85,10 @@ class Manager(manager.Manager):
                 ['project', self._project_callback],
             ],
             notifications.ACTIONS.disabled: [
-                ['user', self._user_callback],
-                ['project', self._project_callback],
-                ['domain', self._domain_callback],
+                ['user', self._user_callback]
             ],
             notifications.ACTIONS.internal: [
-                [notifications.INVALIDATE_USER_TOKEN_PERSISTENCE,
+                [notifications.PERSIST_REVOCATION_EVENT_FOR_USER,
                  self._user_callback],
             ]
         }

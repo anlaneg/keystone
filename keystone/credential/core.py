@@ -16,18 +16,17 @@
 
 import json
 
-from keystone.common import dependency
 from keystone.common import driver_hints
 from keystone.common import manager
+from keystone.common import provider_api
 import keystone.conf
 from keystone import exception
 
 
 CONF = keystone.conf.CONF
+PROVIDERS = provider_api.ProviderAPIs
 
 
-@dependency.provider('credential_api')
-@dependency.requires('credential_provider_api')
 class Manager(manager.Manager):
     """Default pivot point for the Credential backend.
 
@@ -37,6 +36,7 @@ class Manager(manager.Manager):
     """
 
     driver_namespace = 'keystone.credential'
+    _provides_api = 'credential_api'
 
     def __init__(self):
         super(Manager, self).__init__(CONF.credential.driver)
@@ -45,12 +45,12 @@ class Manager(manager.Manager):
         """Return a decrypted credential reference."""
         if credential['type'] == 'ec2':
             decrypted_blob = json.loads(
-                self.credential_provider_api.decrypt(
+                PROVIDERS.credential_provider_api.decrypt(
                     credential['encrypted_blob'],
                 )
             )
         else:
-            decrypted_blob = self.credential_provider_api.decrypt(
+            decrypted_blob = PROVIDERS.credential_provider_api.decrypt(
                 credential['encrypted_blob']
             )
         credential['blob'] = decrypted_blob
@@ -65,12 +65,16 @@ class Manager(manager.Manager):
             # NOTE(lbragstad): When dealing with ec2 credentials, it's possible
             # for the `blob` to be a dictionary. Let's make sure we are
             # encrypting a string otherwise encryption will fail.
-            encrypted_blob, key_hash = self.credential_provider_api.encrypt(
-                json.dumps(credential['blob'])
+            encrypted_blob, key_hash = (
+                PROVIDERS.credential_provider_api.encrypt(
+                    json.dumps(credential['blob'])
+                )
             )
         else:
-            encrypted_blob, key_hash = self.credential_provider_api.encrypt(
-                credential['blob']
+            encrypted_blob, key_hash = (
+                PROVIDERS.credential_provider_api.encrypt(
+                    credential['blob']
+                )
             )
         credential_copy['encrypted_blob'] = encrypted_blob
         credential_copy['key_hash'] = key_hash

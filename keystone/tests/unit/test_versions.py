@@ -71,9 +71,9 @@ v3_MEDIA_TYPES = [
 ]
 
 v3_EXPECTED_RESPONSE = {
-    "id": "v3.8",
+    "id": "v3.10",
     "status": "stable",
-    "updated": "2017-02-22T00:00:00Z",
+    "updated": "2018-02-28T00:00:00Z",
     "links": [
         {
             "rel": "self",
@@ -175,6 +175,11 @@ FEDERATED_AUTH_URL = ('/OS-FEDERATION/identity_providers/{idp_id}'
 FEDERATED_IDP_SPECIFIC_WEBSSO = ('/auth/OS-FEDERATION/identity_providers/'
                                  '{idp_id}/protocols/{protocol_id}/websso')
 
+APPLICATION_CREDENTIAL = ('/users/{user_id}/application_credentials/'
+                          '{application_credential_id}')
+APPLICATION_CREDENTIAL_RELATION = (
+    json_home.build_v3_parameter_relation('application_credential_id'))
+
 V3_JSON_HOME_RESOURCES = {
     json_home.build_v3_resource_relation('auth_tokens'): {
         'href': '/auth/tokens'},
@@ -184,6 +189,8 @@ V3_JSON_HOME_RESOURCES = {
         'href': '/auth/projects'},
     json_home.build_v3_resource_relation('auth_domains'): {
         'href': '/auth/domains'},
+    json_home.build_v3_resource_relation('auth_system'): {
+        'href': '/auth/system'},
     json_home.build_v3_resource_relation('credential'): {
         'href-template': '/credentials/{credential_id}',
         'href-vars': {
@@ -191,6 +198,32 @@ V3_JSON_HOME_RESOURCES = {
             json_home.build_v3_parameter_relation('credential_id')}},
     json_home.build_v3_resource_relation('credentials'): {
         'href': '/credentials'},
+    json_home.build_v3_resource_relation('system_user_role'): {
+        'href-template': '/system/users/{user_id}/roles/{role_id}',
+        'href-vars': {
+            'user_id': json_home.Parameters.USER_ID,
+            'role_id': json_home.Parameters.ROLE_ID
+        }
+    },
+    json_home.build_v3_resource_relation('system_user_roles'): {
+        'href-template': '/system/users/{user_id}/roles',
+        'href-vars': {
+            'user_id': json_home.Parameters.USER_ID
+        }
+    },
+    json_home.build_v3_resource_relation('system_group_role'): {
+        'href-template': '/system/groups/{group_id}/roles/{role_id}',
+        'href-vars': {
+            'group_id': json_home.Parameters.GROUP_ID,
+            'role_id': json_home.Parameters.ROLE_ID
+        }
+    },
+    json_home.build_v3_resource_relation('system_group_roles'): {
+        'href-template': '/system/groups/{group_id}/roles',
+        'href-vars': {
+            'group_id': json_home.Parameters.GROUP_ID
+        }
+    },
     json_home.build_v3_resource_relation('domain'): {
         'href-template': '/domains/{domain_id}',
         'href-vars': {'domain_id': json_home.Parameters.DOMAIN_ID, }},
@@ -609,7 +642,27 @@ V3_JSON_HOME_RESOURCES = {
         'href-template': '/domains/config/{group}/{option}/default',
         'href-vars': {
             'group': json_home.build_v3_parameter_relation('config_group'),
-            'option': json_home.build_v3_parameter_relation('config_option')}}
+            'option': json_home.build_v3_parameter_relation('config_option')}},
+    json_home.build_v3_resource_relation('registered_limits'): {
+        'href-template': '/registered_limits/{registered_limit_id}',
+        'href-vars': {
+            'registered_limit_id': json_home.build_v3_parameter_relation(
+                'registered_limit_id')
+        },
+        'hints': {'status': 'experimental'}
+    },
+    json_home.build_v3_resource_relation('limits'): {
+        'href-template': '/limits/{limit_id}',
+        'href-vars': {
+            'limit_id': json_home.build_v3_parameter_relation('limit_id')
+        },
+        'hints': {'status': 'experimental'}
+    },
+    json_home.build_v3_resource_relation('application_credential'): {
+        'href-template': APPLICATION_CREDENTIAL,
+        'href-vars': {
+            'application_credential_id': APPLICATION_CREDENTIAL_RELATION,
+            'user_id': json_home.build_v3_parameter_relation('user_id')}}
 }
 
 

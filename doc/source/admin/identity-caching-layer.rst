@@ -6,7 +6,7 @@ Caching layer
 OpenStack Identity supports a caching layer that is above the configurable
 subsystems (for example, token). This gives you the flexibility to setup
 caching for all or some subsystems. OpenStack Identity uses the `oslo.cache
-<https://docs.openstack.org/developer/oslo.cache/>`__ library which allows
+<https://docs.openstack.org/oslo.cache/latest/>`__ library which allows
 flexible cache back ends. The majority of the caching configuration options are
 set in the ``[cache]`` section of the ``/etc/keystone/keystone.conf`` file. The
 ``enabled`` option of the ``[cache]`` section must be set to ``True`` in order
@@ -118,7 +118,6 @@ Here is a list of actions that are affected by the cached time:
 * getting a new token
 * revoking tokens
 * validating tokens
-* checking v2 tokens
 * checking v3 tokens
 
 The delete token API calls invalidate the cache for the tokens being
@@ -150,7 +149,7 @@ will perform proper invalidations of the cached methods listed above.
 For more information about the different back ends (and configuration
 options), see:
 
-- `dogpile.cache.memory <https://dogpilecache.readthedocs.io/en/latest/api.html#memory-backend>`__
+- `dogpile.cache.memory <https://dogpilecache.readthedocs.io/en/latest/api.html#memory-backends>`__
 
 - `dogpile.cache.memcached <https://dogpilecache.readthedocs.io/en/latest/api.html#memcached-backends>`__
 

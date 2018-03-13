@@ -105,8 +105,8 @@ class PasswordRequirementsValidationError(PasswordValidationError):
 
 class PasswordHistoryValidationError(PasswordValidationError):
     message_format = _("The new password cannot be identical to a "
-                       "previous password. The number of previous "
-                       "passwords that must be unique is "
+                       "previous password. The total number which"
+                       "includes the new password must be unique is "
                        "%(unique_count)s.")
 
 
@@ -171,6 +171,10 @@ class AmbiguityError(ValidationError):
                        " resolve the ambiguity.")
 
 
+class ApplicationCredentialValidationError(ValidationError):
+    message_format = _("Invalid application credential: %(detail)s")
+
+
 class CircularRegionHierarchyError(Error):
     message_format = _("The specified parent region %(parent_region_id)s "
                        "would create a circular region hierarchy.")
@@ -199,6 +203,11 @@ class PasswordVerificationError(ForbiddenNotSecurity):
 class RegionDeletionError(ForbiddenNotSecurity):
     message_format = _("Unable to delete region %(region_id)s because it or "
                        "its child regions have associated endpoints.")
+
+
+class ApplicationCredentialLimitExceeded(ForbiddenNotSecurity):
+    message_format = _("Unable to create additional application credentials, "
+                       "maximum of %(limit)d already exceeded for user.")
 
 
 class SecurityError(Error):
@@ -298,6 +307,11 @@ class AuthMethodNotSupported(AuthPluginException):
         self.authentication = {'methods': CONF.auth.methods}
 
 
+class ApplicationCredentialAuthError(AuthPluginException):
+    message_format = _(
+        "Error authenticating with application credential: %(detail)s")
+
+
 class AdditionalAuthRequired(AuthPluginException):
     message_format = _("Additional authentications steps required.")
 
@@ -378,7 +392,7 @@ class DomainSpecificRoleNotWithinIdPDomain(Forbidden):
 class RoleAssignmentNotFound(NotFound):
     message_format = _("Could not find role assignment with role: "
                        "%(role_id)s, user or group: %(actor_id)s, "
-                       "project or domain: %(target_id)s.")
+                       "project, domain, or system: %(target_id)s.")
 
 
 class RegionNotFound(NotFound):
@@ -456,6 +470,24 @@ class PublicIDNotFound(NotFound):
     message_format = "%(id)s"
 
 
+class RegisteredLimitNotFound(NotFound):
+    message_format = _("Could not find registered limit for %(id)s.")
+
+
+class LimitNotFound(NotFound):
+    message_format = _("Could not find limit for %(id)s.")
+
+
+class NoLimitReference(Forbidden):
+    message_format = _("Unable to create a limit that has no corresponding "
+                       "registered limit.")
+
+
+class RegisteredLimitError(ForbiddenNotSecurity):
+    message_format = _("Unable to update or delete registered limit %(id)s "
+                       "because there are project limits associated with it.")
+
+
 class DomainConfigNotFound(NotFound):
     message_format = _('Could not find %(group_or_option)s in domain '
                        'configuration for domain %(domain_id)s.')
@@ -466,6 +498,11 @@ class ConfigRegistrationNotFound(Exception):
     # manager, so should not escape to the client.  If it did, it is a coding
     # error on our part, and would end up, appropriately, as a 500 error.
     pass
+
+
+class ApplicationCredentialNotFound(NotFound):
+    message_format = _("Could not find Application Credential: "
+                       "%(application_credential_id)s.")
 
 
 class Conflict(Error):

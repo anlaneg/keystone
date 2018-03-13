@@ -256,6 +256,14 @@ def _get_main_context_manager():
     return _main_context_manager
 
 
+# Now this function is only used for testing FK with sqlite.
+def enable_sqlite_foreign_key():
+    global _main_context_manager
+    if not _main_context_manager:
+        _main_context_manager = enginefacade.transaction_context()
+        _main_context_manager.configure(sqlite_fk=True)
+
+
 def cleanup():
     global _main_context_manager
 
@@ -328,6 +336,8 @@ class _WontMatch(Exception):
         won't match any value in the column in the table.
 
         """
+        if value is None:
+            return
         col = col_attr.property.columns[0]
         if isinstance(col.type, sql.types.Boolean):
             # The column is a Boolean, we should have already validated input.

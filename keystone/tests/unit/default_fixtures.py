@@ -159,8 +159,24 @@ ROLE_ASSIGNMENTS = [
     },
 ]
 
+# TODO(wxy): We should add the root domain ``<<keystone.domain.root>>`` as well
+# when the FKs is enabled for the test. Merge ROOT_DOMAIN into DOMAINS once all
+# test enable FKs.
+ROOT_DOMAIN = {'enabled': True,
+               'id': '<<keystone.domain.root>>',
+               'name': '<<keystone.domain.root>>'}
+
 DOMAINS = [{'description':
             (u'The default domain'),
             'enabled': True,
             'id': DEFAULT_DOMAIN_ID,
             'name': u'Default'}]
+
+SERVICES = [{'id': uuid.uuid4().hex,
+             'type': 'type_one',
+             'enabled': True,
+             'extra': {'description': 'This is a service for test.',
+                       'name': 'service_one'}
+             }]
+
+REGIONS = [{'id': 'region_one'}, {'id': 'region_two'}]

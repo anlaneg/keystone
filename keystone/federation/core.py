@@ -15,37 +15,22 @@
 import uuid
 
 from keystone.common import cache
-from keystone.common import dependency
-from keystone.common import extension
 from keystone.common import manager
+from keystone.common import provider_api
 import keystone.conf
 from keystone import exception
 from keystone.federation import utils
 from keystone.i18n import _
+from keystone import notifications
 
 
 # This is a general cache region for service providers.
 MEMOIZE = cache.get_memoization_decorator(group='federation')
 
 CONF = keystone.conf.CONF
-EXTENSION_DATA = {
-    'name': 'OpenStack Federation APIs',
-    'namespace': 'https://docs.openstack.org/identity/api/ext/'
-                 'OS-FEDERATION/v1.0',
-    'alias': 'OS-FEDERATION',
-    'updated': '2013-12-17T12:00:0-00:00',
-    'description': 'OpenStack Identity Providers Mechanism.',
-    'links': [{
-        'rel': 'describedby',
-        'type': 'text/html',
-        'href': 'https://developer.openstack.org/api-ref-identity-v3-ext.html',
-    }]}
-extension.register_admin_extension(EXTENSION_DATA['alias'], EXTENSION_DATA)
-extension.register_public_extension(EXTENSION_DATA['alias'], EXTENSION_DATA)
+PROVIDERS = provider_api.ProviderAPIs
 
 
-@dependency.provider('federation_api')
-@dependency.requires('resource_api')
 class Manager(manager.Manager):
     """Default pivot point for the Federation backend.
 
@@ -55,6 +40,7 @@ class Manager(manager.Manager):
     """
 
     driver_namespace = 'keystone.federation'
+    _provides_api = 'federation_api'
 
     def __init__(self):
         super(Manager, self).__init__(CONF.federation.driver)
@@ -77,10 +63,24 @@ class Manager(manager.Manager):
                 self._cleanup_idp_domain(idp['domain_id'])
             raise
 
+    def delete_idp(self, idp_id):
+        self.driver.delete_idp(idp_id)
+        # NOTE(lbragstad): If an identity provider is removed from the system,
+        # then we need to invalidate the token cache. Otherwise it will be
+        # possible for federated tokens to be considered valid after a service
+        # provider removes a federated identity provider resource.
+        reason = (
+            'The token cache is being invalidated because identity provider '
+            '%(idp_id)s has been deleted. Authorization for federated users '
+            'will be recalculated and enforced accordingly the next time '
+            'they authenticate or validate a token.' % {'idp_id': idp_id}
+        )
+        notifications.invalidate_token_cache_notification(reason)
+
     def _cleanup_idp_domain(self, domain_id):
         domain = {'enabled': False}
-        self.resource_api.update_domain(domain_id, domain)
-        self.resource_api.delete_domain(domain_id)
+        PROVIDERS.resource_api.update_domain(domain_id, domain)
+        PROVIDERS.resource_api.delete_domain(domain_id)
 
     def _create_idp_domain(self, idp_id):
         domain_id = uuid.uuid4().hex
@@ -92,11 +92,11 @@ class Manager(manager.Manager):
             'description': desc,
             'enabled': True
         }
-        self.resource_api.create_domain(domain['id'], domain)
+        PROVIDERS.resource_api.create_domain(domain['id'], domain)
         return domain_id
 
     def _assert_valid_domain_id(self, domain_id):
-        self.resource_api.get_domain(domain_id)
+        PROVIDERS.resource_api.get_domain(domain_id)
 
     @MEMOIZE
     def get_enabled_service_providers(self):
