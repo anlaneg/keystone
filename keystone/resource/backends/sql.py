@@ -1,3 +1,4 @@
+# encoding:utf-8
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
 # not use this file except in compliance with the License. You may obtain
 # a copy of the License at
@@ -40,20 +41,26 @@ class Resource(base.ResourceDriverBase):
     def _is_hidden_ref(self, ref):
         return ref.id == base.NULL_DOMAIN_ID
 
+    #通过project_id获取project
     def _get_project(self, session, project_id):
+        #获取指定的project
         project_ref = session.query(sql_model.Project).get(project_id)
         if project_ref is None or self._is_hidden_ref(project_ref):
+            #未找到或者project有hidden属性，则返回project未找到
             raise exception.ProjectNotFound(project_id=project_id)
         return project_ref
 
+    #通过porject_id获取project(dict格式）
     def get_project(self, project_id):
         with sql.session_for_read() as session:
             return self._get_project(session, project_id).to_dict()
 
+    #通过project_name查找project
     def get_project_by_name(self, project_name, domain_id):
         with sql.session_for_read() as session:
             query = session.query(sql_model.Project)
             query = query.filter_by(name=project_name)
+            #支持按domain_id进行过滤
             if domain_id is None:
                 query = query.filter_by(
                     domain_id=base.NULL_DOMAIN_ID)

@@ -160,25 +160,28 @@ def _remove_content_type_on_204(resp):
         resp.headers.pop('content-type', None)
     return resp
 
-
+#api基础类
 @six.add_metaclass(abc.ABCMeta)
 class APIBase(object):
 
     @property
     @abc.abstractmethod
     def _name(self):
+        #返回API对应的名称（子类提供）
         """Override with an attr consisting of the API Name, e.g 'users'."""
         raise NotImplementedError()
 
     @property
     @abc.abstractmethod
     def _import_name(self):
+        #引入此API所需要的类名称（子类提供）
         """Override with an attr consisting of the value of `__name__`."""
         raise NotImplementedError()
 
     @property
     @abc.abstractmethod
     def resource_mapping(self):
+        #资源映射数组（子类提供）
         """An attr containing of an iterable of :class:`ResourceMap`.
 
         Each :class:`ResourceMap` is a NamedTuple with the following elements:
@@ -225,6 +228,7 @@ class APIBase(object):
 
     @staticmethod
     def _build_bp_url_prefix(prefix):
+        # 加入版本号
         # NOTE(morgan): Keystone only has a V3 API, this is here for future
         # proofing and exceptional cases such as root discovery API object(s)
         parts = ['/v3']
@@ -242,6 +246,7 @@ class APIBase(object):
         # The API Blueprint may be directly accessed via this property
         return self.__blueprint
 
+    #api的构造函数
     def __init__(self, blueprint_url_prefix='', api_url_prefix='',
                  default_mediatype='application/json', decorators=None,
                  errors=None):
@@ -282,6 +287,7 @@ class APIBase(object):
         # and call it as a normal method.
         self.__api.representation('application/json')(self._output_json)
 
+        #为api添加资源及完成资源映射
         self._add_resources()
         self._add_mapped_resources()
 
@@ -569,6 +575,7 @@ class APIBase(object):
 
         :returns: :class:`keystone.server.flask.common.APIBase`
         """
+        #构造cls对应的对象，并注册
         inst = cls()
         flask_app.register_blueprint(inst.blueprint)
         return inst

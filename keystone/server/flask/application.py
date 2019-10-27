@@ -162,8 +162,12 @@ def application_factory(name='public'):
         # We want to bubble up Flask Exceptions (for now)
         PROPAGATE_EXCEPTIONS=True)
 
+    #遍历api包里指出的所有api类
     for api in keystone.api.__apis__:
+        #每个api类中均有一个APIs名称的tuple，用于指出api
+        #元组可以有多个元素
         for api_bp in api.APIs:
+            #api将自已注册给app
             api_bp.instantiate_and_register_to_app(app)
 
     # Load in Healthcheck and map it to /healthcheck

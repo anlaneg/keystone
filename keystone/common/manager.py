@@ -170,6 +170,7 @@ class Manager(object):
     """
 
     driver_namespace = None
+    #记录api名称
     _provides_api = None
 
     def __init__(self, driver_name):
@@ -178,10 +179,13 @@ class Manager(object):
                              'API that can be referenced by other components '
                              'of Keystone.')
         if driver_name is not None:
+            #加载driver名称对应的driver
             self.driver = load_driver(self.driver_namespace, driver_name)
+        #初始化完成时，注册到provider api
         self.__register_provider_api()
 
     def __register_provider_api(self):
+        #注册当前manger到ProviderApis中
         provider_api.ProviderAPIs._register_provider_api(
             name=self._provides_api, obj=self)
 
@@ -191,6 +195,7 @@ class Manager(object):
         This method checks for a provider api before forwarding.
         """
         try:
+            #取名称为name的Driver
             return getattr(provider_api.ProviderAPIs, name)
         except AttributeError:
             # NOTE(morgan): We didn't find a provider api, move on and

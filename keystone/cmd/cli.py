@@ -1,3 +1,4 @@
+# encoding:utf-8
 # Copyright 2012 OpenStack Foundation
 #
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -54,6 +55,7 @@ class BaseApp(object):
 
     @classmethod
     def add_argument_parser(cls, subparsers):
+        #添加命令及帮助信息
         parser = subparsers.add_parser(cls.name, help=cls.__doc__)
         parser.set_defaults(cmd_class=cls)
         return parser
@@ -122,6 +124,7 @@ class BootStrap(BaseApp):
                                   'future releases.'))
         return parser
 
+    #完成实际的bootstrap操作
     def do_bootstrap(self):
         """Perform the bootstrap actions.
 
@@ -177,6 +180,7 @@ class BootStrap(BaseApp):
         self.bootstrapper.region_id = self.region_id
         self.bootstrapper.immutable_roles = CONF.command.immutable_roles
 
+        #完成bootstrap工作
         self.bootstrapper.bootstrap()
         self.reader_role_id = self.bootstrapper.reader_role_id
         self.member_role_id = self.bootstrapper.member_role_id
@@ -217,11 +221,13 @@ def assert_not_extension(extension):
 class DbSync(BaseApp):
     """Sync the database."""
 
+    #命令行关键字
     name = 'db_sync'
 
     @classmethod
     def add_argument_parser(cls, subparsers):
         parser = super(DbSync, cls).add_argument_parser(subparsers)
+        # 更新到哪个版本
         parser.add_argument('version', default=None, nargs='?',
                             help=('Migrate the database up to a specified '
                                   'version. If not provided, db_sync will '
@@ -318,6 +324,7 @@ class DbSync(BaseApp):
                                   'contract': contract_version})
         return status
 
+    #处理数据库同步
     @staticmethod
     def main():
         assert_not_extension(CONF.command.extension)
@@ -355,6 +362,7 @@ class DbVersion(BaseApp):
                                   'implicit in the version of the main '
                                   'repository.'))
 
+    #显示数据库版本
     @staticmethod
     def main():
         assert_not_extension(CONF.command.extension)
@@ -435,6 +443,7 @@ class FernetSetup(BasePermissionsSetup):
 
     @classmethod
     def main(cls):
+        #keystone的用户及其组
         keystone_user_id, keystone_group_id = cls.get_user_group()
         cls.initialize_fernet_repository(
             keystone_user_id, keystone_group_id, 'fernet_tokens')
@@ -1291,13 +1300,16 @@ class MappingPopulate(BaseApp):
         # will be enough to just make the call below.
         cls.identity_api.list_users(domain_scope=domain_id)
 
-
+#当前支持的各个命令
 CMDS = [
+    #实现keystone自启动（会配置web服务器）
     BootStrap,
     CredentialMigrate,
     CredentialRotate,
     CredentialSetup,
+    #数据库同步
     DbSync,
+    #显示当前数据库版本
     DbVersion,
     Doctor,
     DomainConfigUpload,
@@ -1324,6 +1336,7 @@ def add_command_parsers(subparsers):
 command_opt = cfg.SubCommandOpt('command',
                                 title='Commands',
                                 help='Available commands',
+                                #解析支持的命令行
                                 handler=add_command_parsers)
 
 
@@ -1338,6 +1351,7 @@ def main(argv=None, developer_config_file=None):
     :type developer_config_file: string
 
     """
+    #注册cli支持的命令行(通过command_opt可知各个命令行处理函数）
     CONF.register_cli_opt(command_opt)
 
     keystone.conf.configure()
@@ -1367,4 +1381,6 @@ def main(argv=None, developer_config_file=None):
     if not CONF.default_config_files and not user_supplied_config_file:
         LOG.warning('Config file not found, using default configs.')
     keystone.conf.setup_logging()
+    
+    #触发相应命令对应的处理
     CONF.command.cmd_class.main()

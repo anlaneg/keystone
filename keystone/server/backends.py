@@ -48,6 +48,7 @@ def load_backends():
     cache.configure_cache(region=identity.ID_MAPPING_REGION)
     cache.configure_invalidation_region()
 
+    #完成所有manger注册
     managers = [application_credential.Manager, assignment.Manager,
                 catalog.Manager, credential.Manager,
                 credential.provider.Manager, resource.DomainConfigManager,
@@ -59,14 +60,17 @@ def load_backends():
                 receipt.provider.Manager, trust.Manager,
                 token.provider.Manager]
 
+    #收集所有driver名称及driver对象的映射（drver初始化时，将注册进provider_api.ProviderAPIs中）
     drivers = {d._provides_api: d() for d in managers}
 
     # NOTE(morgan): lock the APIs, these should only ever be instantiated
     # before running keystone.
+    # 锁住ProviderAPI，禁止再注册
     provider_api.ProviderAPIs.lock_provider_registry()
     try:
         # Check project depth before start process. If fail, Keystone will not
         # start.
+        # 'unified_limit_api'见limit.Manager对象
         drivers['unified_limit_api'].check_project_depth()
     except exception.LimitTreeExceedError as e:
         LOG.critical(e)
@@ -74,4 +78,5 @@ def load_backends():
 
     auth.core.load_auth_methods()
 
+    #返回名称及manager的映射dict
     return drivers

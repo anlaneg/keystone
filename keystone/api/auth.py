@@ -436,7 +436,7 @@ class AuthFederationSaml2ECPResource(_AuthFederationWebSSOBase):
             response.headers[header] = value
         return response
 
-
+#每个api提供与其资源相关的元数组，由APIBase提供框架
 class AuthAPI(ks_flask.APIBase):
     _name = 'auth'
     _import_name = __name__
@@ -550,7 +550,8 @@ class AuthFederationAPI(ks_flask.APIBase):
         )
     ]
 
-
+#第个api均会返回一个名称为APIs的元组，这个元组内
+#包含了自制的api,其将被application_factory函数调用
 APIs = (
     AuthAPI,
     AuthFederationAPI,

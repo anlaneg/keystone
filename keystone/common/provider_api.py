@@ -1,3 +1,4 @@
+# encoding:utf-8
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
 # not use this file except in compliance with the License. You may obtain
 # a copy of the License at
@@ -39,6 +40,7 @@ class ProviderAPIRegistry(object):
             raise AttributeError(
                 "'ProviderAPIs' has no attribute %s" % item)
 
+    #不容许对此对象直接设置属性
     def __setattr__(self, key, value):
         """Do not allow setting values on the registry object."""
         raise RuntimeError('Programming Error: You may not set values on the '
@@ -49,17 +51,20 @@ class ProviderAPIRegistry(object):
         if name == 'driver':
             raise ValueError('A provider may not be named "driver".')
 
+        # 如果当前已锁住，则注册失败
         if self.locked:
             raise RuntimeError(
                 'Programming Error: The provider api registry has been '
                 'locked (post configuration). Ensure all provider api '
                 'managers are instantiated before locking.')
 
+        #防止重复注册，名称已存在，则报错
         if name in self.__registry:
             raise DuplicateProviderError(
                 '`%(name)s` has already been registered as an api '
                 'provider by `%(prov)r`' % {'name': name,
                                             'prov': self.__registry[name]})
+        # 完成api注册
         self.__registry[name] = obj
 
     def _clear_registry_instances(self):
@@ -68,6 +73,7 @@ class ProviderAPIRegistry(object):
         # Use super to allow setting around class implementation of __setattr__
         super(ProviderAPIRegistry, self).__setattr__('locked', False)
 
+    #锁住provider
     def lock_provider_registry(self):
         # Use super to allow setting around class implementation of __setattr__
         super(ProviderAPIRegistry, self).__setattr__('locked', True)
@@ -114,5 +120,5 @@ class ProviderAPIMixin(object):
         except AttributeError:
             return self.__getattribute__(item)
 
-
+#生成一个ProviderAPIs对象
 ProviderAPIs = ProviderAPIRegistry()

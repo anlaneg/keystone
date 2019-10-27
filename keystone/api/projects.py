@@ -46,6 +46,7 @@ def _build_project_target_enforcement():
     return target
 
 
+#project资源对应的get,post处理函数
 class ProjectResource(ks_flask.ResourceBase):
     collection_key = 'projects'
     member_key = 'project'
@@ -95,6 +96,7 @@ class ProjectResource(ks_flask.ResourceBase):
                 )
             )
 
+    #给出指定project的信息
     def _get_project(self, project_id):
         """Get project.
 
@@ -108,6 +110,7 @@ class ProjectResource(ks_flask.ResourceBase):
         self._expand_project_ref(project)
         return self.wrap_member(project)
 
+    #列出所有projects
     def _list_projects(self):
         """List projects.
 
@@ -148,8 +151,10 @@ class ProjectResource(ks_flask.ResourceBase):
         GET/HEAD /v3/projects/{project_id}
         """
         if project_id is not None:
+            #获取具体project
             return self._get_project(project_id)
         else:
+            #列出所有project
             return self._list_projects()
 
     def post(self):

@@ -1,3 +1,4 @@
+# encoding:utf-8
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
 # not use this file except in compliance with the License. You may obtain
 # a copy of the License at
@@ -25,6 +26,7 @@ LOG = log.getLogger(__name__)
 PROVIDERS = provider_api.ProviderAPIs
 
 
+#完成keystone自启动
 class Bootstrapper(object):
 
     def __init__(self):
@@ -79,6 +81,7 @@ class Bootstrapper(object):
             'description': 'The default domain'
         }
         try:
+            #通过调用api,创建default domain
             PROVIDERS.resource_api.create_domain(
                 domain_id=default_domain['id'],
                 domain=default_domain)

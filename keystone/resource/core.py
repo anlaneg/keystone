@@ -1,3 +1,4 @@
+# encoding:utf-8
 # Licensed under the Apache License, Version 2.0 (the "License"); you may
 # not use this file except in compliance with the License. You may obtain
 # a copy of the License at
@@ -192,6 +193,7 @@ class Manager(manager.Manager):
                      'name is %(name)s, project id %(id)s'
                      ) % project
 
+    #创建project
     def create_project(self, project_id, project, initiator=None):
         project = project.copy()
 
@@ -765,11 +767,13 @@ class Manager(manager.Manager):
 
         return domain_ref
 
+    # domain创建
     def create_domain(self, domain_id, domain, initiator=None):
         if (CONF.resource.domain_name_url_safe != 'off' and
                 utils.is_not_url_safe(domain['name'])):
             self._raise_reserved_character_exception('Domain', domain['name'])
         project_from_domain = base.get_project_from_domain(domain)
+        #创建与domain同名的project
         is_domain_project = self.create_project(
             domain_id, project_from_domain, initiator)
 
