@@ -16,52 +16,56 @@
 #              performance may be negatively affected.
 import uuid
 
-BAR_TENANT_ID = uuid.uuid4().hex
-BAZ_TENANT_ID = uuid.uuid4().hex
-MTU_TENANT_ID = uuid.uuid4().hex
-SERVICE_TENANT_ID = uuid.uuid4().hex
+BAR_PROJECT_ID = uuid.uuid4().hex
+BAZ_PROJECT_ID = uuid.uuid4().hex
+MTU_PROJECT_ID = uuid.uuid4().hex
+SERVICE_PROJECT_ID = uuid.uuid4().hex
 DEFAULT_DOMAIN_ID = 'default'
 ADMIN_ROLE_ID = uuid.uuid4().hex
 MEMBER_ROLE_ID = uuid.uuid4().hex
 OTHER_ROLE_ID = uuid.uuid4().hex
 
-TENANTS = [
+PROJECTS = [
     {
-        'id': BAR_TENANT_ID,
+        'id': BAR_PROJECT_ID,
         'name': 'BAR',
         'domain_id': DEFAULT_DOMAIN_ID,
         'description': 'description',
         'enabled': True,
         'parent_id': DEFAULT_DOMAIN_ID,
         'is_domain': False,
-        'tags': []
+        'tags': [],
+        'options': {}
     }, {
-        'id': BAZ_TENANT_ID,
+        'id': BAZ_PROJECT_ID,
         'name': 'BAZ',
         'domain_id': DEFAULT_DOMAIN_ID,
         'description': 'description',
         'enabled': True,
         'parent_id': DEFAULT_DOMAIN_ID,
         'is_domain': False,
-        'tags': []
+        'tags': [],
+        'options': {}
     }, {
-        'id': MTU_TENANT_ID,
+        'id': MTU_PROJECT_ID,
         'name': 'MTU',
         'description': 'description',
         'enabled': True,
         'domain_id': DEFAULT_DOMAIN_ID,
         'parent_id': DEFAULT_DOMAIN_ID,
         'is_domain': False,
-        'tags': []
+        'tags': [],
+        'options': {}
     }, {
-        'id': SERVICE_TENANT_ID,
+        'id': SERVICE_PROJECT_ID,
         'name': 'service',
         'description': 'description',
         'enabled': True,
         'domain_id': DEFAULT_DOMAIN_ID,
         'parent_id': DEFAULT_DOMAIN_ID,
         'is_domain': False,
-        'tags': []
+        'tags': [],
+        'options': {}
     }
 ]
 
@@ -73,7 +77,7 @@ USERS = [
         'name': 'req_admin',
         'domain_id': DEFAULT_DOMAIN_ID,
         'password': 'password',
-        'tenants': [],
+        'projects': [],
         'enabled': True,
         'options': {},
     },
@@ -82,7 +86,7 @@ USERS = [
         'name': 'foo',
         'domain_id': DEFAULT_DOMAIN_ID,
         'password': 'foo2',
-        'tenants': [BAR_TENANT_ID],
+        'projects': [BAR_PROJECT_ID],
         'enabled': True,
         'email': 'foo@bar.com',
         'options': {},
@@ -92,8 +96,8 @@ USERS = [
         'domain_id': DEFAULT_DOMAIN_ID,
         'password': 'two2',
         'enabled': True,
-        'default_project_id': BAZ_TENANT_ID,
-        'tenants': [BAZ_TENANT_ID],
+        'default_project_id': BAZ_PROJECT_ID,
+        'projects': [BAZ_PROJECT_ID],
         'email': 'two@three.com',
         'options': {},
     }, {
@@ -102,8 +106,8 @@ USERS = [
         'domain_id': DEFAULT_DOMAIN_ID,
         'password': 'bad',
         'enabled': False,
-        'default_project_id': BAZ_TENANT_ID,
-        'tenants': [BAZ_TENANT_ID],
+        'default_project_id': BAZ_PROJECT_ID,
+        'projects': [BAZ_PROJECT_ID],
         'email': 'bad@guy.com',
         'options': {},
     }, {
@@ -112,7 +116,7 @@ USERS = [
         'domain_id': DEFAULT_DOMAIN_ID,
         'password': 'snafu',
         'enabled': True,
-        'tenants': [BAR_TENANT_ID],
+        'projects': [BAR_PROJECT_ID],
         'email': 'sna@snl.coom',
         'options': {},
     }
@@ -154,7 +158,7 @@ ROLES = [
 ROLE_ASSIGNMENTS = [
     {
         'user': 'req_admin',
-        'tenant_id': SERVICE_TENANT_ID,
+        'project_id': SERVICE_PROJECT_ID,
         'role_id': ADMIN_ROLE_ID
     },
 ]

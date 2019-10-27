@@ -14,7 +14,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: keystone VERSION\n"
 "Report-Msgid-Bugs-To: https://bugs.launchpad.net/openstack-i18n/\n"
-"POT-Creation-Date: 2018-02-24 08:29+0000\n"
+"POT-Creation-Date: 2019-09-30 20:17+0000\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -23,7 +23,7 @@ msgstr ""
 "Language: fr\n"
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
 "Generated-By: Babel 2.0\n"
-"X-Generator: Zanata 3.9.6\n"
+"X-Generator: Zanata 4.3.3\n"
 "Language-Team: French\n"
 
 #, python-format
@@ -61,40 +61,8 @@ msgstr ""
 "référentiel de migration %(path)s n'existe pas ou n'est pas un répertoire."
 
 #, python-format
-msgid "%(property_name)s cannot be less than %(min_length)s characters."
-msgstr ""
-"%(property_name)s ne peut pas contenir moins de %(min_length)s caractères."
-
-#, python-format
-msgid "%(property_name)s is not a %(display_expected_type)s"
-msgstr "%(property_name)s n'est pas du type %(display_expected_type)s"
-
-#, python-format
-msgid "%(property_name)s should not be greater than %(max_length)s characters."
-msgstr ""
-"%(property_name)s ne doit pas contenir plus de %(max_length)s caractères."
-
-#, python-format
-msgid "%s cannot be empty."
-msgstr "%s ne peut pas être vide."
-
-#, python-format
 msgid "%s field is required and cannot be empty"
 msgstr "La zone %s est obligatoire et ne peut pas être vide"
-
-#, python-format
-msgid "%s field(s) cannot be empty"
-msgstr "%s zone(s) ne peut(peuvent) pas être vide(s)"
-
-#, python-format
-msgid ""
-"%s for the LDAP identity backend has been deprecated in the Mitaka release "
-"in favor of read-only identity LDAP access. It will be removed in the \"O\" "
-"release."
-msgstr ""
-"%s pour le backend d'identité LDAP est désormais obsolète dans l'édition "
-"Mitaka en faveur de l'accès LDAP d'identité en lecture seule. Sera supprimé "
-"dans l'édition \"O\"."
 
 msgid "(Disable insecure_debug mode to suppress these details.)"
 msgstr "(Désactivez le mode insecure_debug pour supprimer ces détails.)"
@@ -202,10 +170,6 @@ msgstr ""
 "l'intermédiaire de la délégation."
 
 #, python-format
-msgid "Cannot open certificate %(cert_file)s. Reason: %(reason)s"
-msgstr "Impossible d'ouvrir le certificat %(cert_file)s. Raison: %(reason)s"
-
-#, python-format
 msgid "Cannot remove role that has not been granted, %s"
 msgstr "Impossible de retirer le rôle qui n'est pas accordé, %s"
 
@@ -290,20 +254,8 @@ msgstr ""
 msgid "Could not validate the access token"
 msgstr "Ne peut pas valider l'acces du token"
 
-msgid "Credential belongs to another user"
-msgstr "Les données d'identification appartiennent à un autre utilisateur"
-
 msgid "Credential signature mismatch"
 msgstr "Signature des données d'identification non concordante"
-
-#, python-format
-msgid ""
-"Direct import of auth plugin %(name)r is deprecated as of Liberty in favor "
-"of its entrypoint from %(namespace)r and may be removed in N."
-msgstr ""
-"L'importation directe du plugin d'authentification %(name)r est obsolète "
-"depuis Liberty en faveur de son point d'entrée depuis %(namespace)r et peut "
-"être supprimée dans N."
 
 msgid ""
 "Disabling an entity where the 'enable' attribute is ignored by configuration."
@@ -356,11 +308,6 @@ msgstr "Clé d'accès EC2 non trouvée."
 msgid "EC2 signature not supplied."
 msgstr "Signature EC2 non fournie."
 
-msgid ""
-"Either --bootstrap-password argument or OS_BOOTSTRAP_PASSWORD must be set."
-msgstr ""
-"L'argument --bootstrap-password ou OS_BOOTSTRAP_PASSWORD doit être défini."
-
 #, python-format
 msgid "Endpoint %(endpoint_id)s not found in project %(project_id)s"
 msgstr "Noeud final %(endpoint_id)s introuvable dans le projet %(project_id)s"
@@ -403,13 +350,6 @@ msgstr ""
 msgid "Expected dict or list: %s"
 msgstr "Type dictionnaire ou liste attendu: %s"
 
-msgid ""
-"Expected signing certificates are not available on the server. Please check "
-"Keystone configuration."
-msgstr ""
-"Les certificats signataires attendus sont indisponibles sur le serveur. "
-"Veuillez vérifier la configuration de Keystone."
-
 msgid "Failed to validate token"
 msgstr "Echec de validation du token"
 
@@ -423,9 +363,6 @@ msgid ""
 msgstr ""
 "La zone \"remaining_uses\" est définie sur %(value)s alors qu'elle ne doit "
 "pas être définie pour redéléguer une fiducie"
-
-msgid "Found invalid token: scoped to both project and domain."
-msgstr "Jeton non valide trouvé : portée de projet et de domaine."
 
 #, python-format
 msgid "Group %(group)s is not supported for domain specific configurations"
@@ -481,10 +418,6 @@ msgstr "Portée LDAP invalide: %(scope)s. Choisissez parmi: %(options)s"
 
 msgid "Invalid TLS / LDAPS combination"
 msgstr "Combinaison TLS / LDAPS invalide"
-
-#, python-format
-msgid "Invalid audit info data type: %(data)s (%(type)s)"
-msgstr "Type de données d'information d'audit non valide : %(data)s (%(type)s)"
 
 msgid "Invalid blob in credential"
 msgstr "Blob non valide dans les informations d'identification"
@@ -588,9 +521,6 @@ msgstr "Aucune règle n'est associée au point final %(endpoint_id)s."
 msgid "No token in the request"
 msgstr "Aucun jeton dans la demande"
 
-msgid "Non-default domain is not supported"
-msgstr "Le domaine non par défaut n'est pas pris en charge"
-
 msgid "One of the trust agents is disabled or deleted"
 msgstr "L'un des agents de confiance est désactivé ou supprimé"
 
@@ -620,9 +550,6 @@ msgstr "Projet désactivé : %s"
 msgid "Project name cannot contain reserved characters."
 msgstr "Le nom du projet ne peut pas contenir des caractères réservés."
 
-msgid "Query string is not UTF-8 encoded"
-msgstr "La chaîne de requête n'est pas au format UTF-8. "
-
 #, python-format
 msgid ""
 "Reading the default for option %(option)s in group %(group)s is not supported"
@@ -640,17 +567,6 @@ msgid ""
 msgstr ""
 "Profondeur de redélégation restante %(redelegation_depth)d par rapport à la "
 "plage admise [0..%(max_count)d]"
-
-#, python-format
-msgid ""
-"Request attribute %(attribute)s must be less than or equal to %(size)i. The "
-"server could not comply with the request because the attribute size is "
-"invalid (too large). The client is assumed to be in error."
-msgstr ""
-"La valeur de l'attribut %(attribute)s de la demande doit être inférieure ou "
-"égale à %(size)i. Il se peut que le serveur ne soit pas conforme à la "
-"demande car la taille de l'attribut est incorrecte (excessive). Par défaut, "
-"le client est en erreur."
 
 msgid "Request must have an origin query parameter"
 msgstr "La demande doit avoir un paramètre de requête d'origine"
@@ -698,12 +614,6 @@ msgstr "Spécifier un domaine ou un projet, pas les deux"
 msgid "Specify a user or group, not both"
 msgstr "Spécifier un utilisateur ou groupe, pas les deux"
 
-msgid "Specify one of domain or project"
-msgstr "Indiquez un domaine ou un projet"
-
-msgid "Specify one of user or group"
-msgstr "Indiquez un utilisateur ou un groupe"
-
 msgid ""
 "The 'expires_at' must not be before now. The server could not comply with "
 "the request since it is either malformed or otherwise incorrect. The client "
@@ -731,11 +641,6 @@ msgstr ""
 
 msgid "The action you have requested has not been implemented."
 msgstr "L'action que vous avez demandée n'a pas été implémentée."
-
-msgid "The configured token provider does not support bind authentication."
-msgstr ""
-"Le fournisseur de jeton configuré ne prend pas en charge l'authentification "
-"par opération de liaison."
 
 #, python-format
 msgid ""
@@ -779,10 +684,6 @@ msgstr ""
 msgid "This is not a recognized Fernet payload version: %s"
 msgstr "Il ne s'agit pas d'une version de contenu Fernet reconnue : %s"
 
-#, python-format
-msgid "This is not a recognized Fernet token %s"
-msgstr "Ceci n'est pas un jeton Fernet reconnu %s"
-
 msgid ""
 "Timestamp not in expected format. The server could not comply with the "
 "request since it is either malformed or otherwise incorrect. The client is "
@@ -791,9 +692,6 @@ msgstr ""
 "Horodatage n'est pas au format attendu. Le serveur n'a pas pu se conformer à "
 "la demande car elle est incorrectement formée ou incorrecte. Le client est "
 "considéré comme étant à l'état d'erreur."
-
-msgid "Token belongs to another user"
-msgstr "Le jeton appartient à un autre utilisateur"
 
 msgid "Token version is unrecognizable or unsupported."
 msgstr "Version de jeton non reconnue ou non prise en charge."
@@ -874,10 +772,6 @@ msgstr "Statut inattendu demandé pour la réponse JSON Home, %s"
 msgid "Unknown domain '%(name)s' specified by --domain-name"
 msgstr "Domaine inconnu '%(name)s' spécifié par --domain-name"
 
-#, python-format
-msgid "Unregistered dependency: %(name)s for %(targets)s"
-msgstr "Dépendance désenregistrée : %(name)s pour %(targets)s"
-
 msgid "Update of `domain_id` is not allowed."
 msgstr "La mise à jour de `domain_id` n'est pas autorisée."
 
@@ -886,11 +780,6 @@ msgstr "La mise à jour de `is_domain` n'est pas autorisée."
 
 msgid "Update of `parent_id` is not allowed."
 msgstr "La mise à jour de `parent_id` est interdite."
-
-msgid "Use a project scoped token when attempting to create a SAML assertion"
-msgstr ""
-"Utilisez un jeton dont la portée est un projet lorsque vous essayez de créer "
-"une assertion SAML"
 
 #, python-format
 msgid "User %(user_id)s has no access to domain %(domain_id)s"
@@ -925,9 +814,6 @@ msgstr "Utilisateur désactivé : %s"
 
 msgid "User is not a trustee."
 msgstr "L'utilisateur n'est pas administrateur."
-
-msgid "User not valid for tenant."
-msgstr "Utilisateur non valide pour le projet (tenant)."
 
 #, python-format
 msgid "User type %s not supported"
@@ -973,10 +859,6 @@ msgid "group %(group)s"
 msgstr "groupe %(group)s"
 
 #, python-format
-msgid "invalid date format %s"
-msgstr "Format de date invalid %s"
-
-#, python-format
 msgid ""
 "it is not permitted to have two projects acting as domains with the same "
 "name: %s"
@@ -1020,7 +902,3 @@ msgstr "tls_cacertdir %s introuvable ou n'est pas un répertoire"
 #, python-format
 msgid "tls_cacertfile %s not found or is not a file"
 msgstr "tls_cacertfile %s introuvable ou n'est pas un fichier"
-
-#, python-format
-msgid "token reference must be a KeystoneToken type, got: %s"
-msgstr "La référence de jeton doit être un type KeystoneToken, obtenu : %s"

@@ -176,10 +176,10 @@ class LdapPoolCommonTestMixin(object):
 
         # authenticate so that connection is added to pool before password
         # change
-        user_ref = PROVIDERS.identity_api.authenticate(
-            self.make_request(),
-            user_id=self.user_sna['id'],
-            password=self.user_sna['password'])
+        with self.make_request():
+            user_ref = PROVIDERS.identity_api.authenticate(
+                user_id=self.user_sna['id'],
+                password=self.user_sna['password'])
 
         self.user_sna.pop('password')
         self.user_sna['enabled'] = True
@@ -191,10 +191,10 @@ class LdapPoolCommonTestMixin(object):
 
         # now authenticate again to make sure new password works with
         # connection pool
-        user_ref2 = PROVIDERS.identity_api.authenticate(
-            self.make_request(),
-            user_id=self.user_sna['id'],
-            password=new_password)
+        with self.make_request():
+            user_ref2 = PROVIDERS.identity_api.authenticate(
+                user_id=self.user_sna['id'],
+                password=new_password)
 
         user_ref.pop('password')
         self.assertUserDictEqual(user_ref, user_ref2)
@@ -202,11 +202,11 @@ class LdapPoolCommonTestMixin(object):
         # Authentication with old password would not work here as there
         # is only one connection in pool which get bind again with updated
         # password..so no old bind is maintained in this case.
-        self.assertRaises(AssertionError,
-                          PROVIDERS.identity_api.authenticate,
-                          self.make_request(),
-                          user_id=self.user_sna['id'],
-                          password=old_password)
+        with self.make_request():
+            self.assertRaises(AssertionError,
+                              PROVIDERS.identity_api.authenticate,
+                              user_id=self.user_sna['id'],
+                              password=old_password)
 
 
 class LDAPIdentity(LdapPoolCommonTestMixin,
@@ -231,15 +231,3 @@ class LDAPIdentity(LdapPoolCommonTestMixin,
         config_files = super(LDAPIdentity, self).config_files()
         config_files.append(unit.dirs.tests_conf('backend_ldap_pool.conf'))
         return config_files
-
-    @mock.patch.object(common_ldap, 'utf8_encode')
-    def test_utf8_encoded_is_used_in_pool(self, mocked_method):
-        def side_effect(arg):
-            return arg
-        mocked_method.side_effect = side_effect
-        # invalidate the cache to get utf8_encode function called.
-        PROVIDERS.identity_api.get_user.invalidate(PROVIDERS.identity_api,
-                                                   self.user_foo['id'])
-        PROVIDERS.identity_api.get_user(self.user_foo['id'])
-        mocked_method.assert_any_call(CONF.ldap.user)
-        mocked_method.assert_any_call(CONF.ldap.password)

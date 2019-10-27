@@ -19,6 +19,7 @@ import functools
 import inspect
 import socket
 
+import flask
 from oslo_log import log
 import oslo_messaging
 from oslo_utils import reflection
@@ -27,9 +28,11 @@ from pycadf import cadftaxonomy as taxonomy
 from pycadf import cadftype
 from pycadf import credential
 from pycadf import eventfactory
+from pycadf import host
 from pycadf import reason
 from pycadf import resource
 
+from keystone.common import context
 from keystone.common import provider_api
 from keystone.common import utils
 import keystone.conf
@@ -63,6 +66,7 @@ CADF_TYPE_MAP = {
     'OS-OAUTH1:access_token': taxonomy.SECURITY_CREDENTIAL,
     'OS-OAUTH1:request_token': taxonomy.SECURITY_CREDENTIAL,
     'OS-OAUTH1:consumer': taxonomy.SECURITY_ACCOUNT,
+    'application_credential': taxonomy.SECURITY_CREDENTIAL,
 }
 
 SAML_AUDIT_TYPE = 'http://docs.oasis-open.org/security/saml/v2.0'
@@ -71,15 +75,41 @@ _SUBSCRIBERS = {}
 _notifier = None
 SERVICE = 'identity'
 
+ROOT_DOMAIN = '<<keystone.domain.root>>'
 
 CONF = keystone.conf.CONF
 
 # NOTE(morganfainberg): Special case notifications that are only used
 # internally for handling token persistence token deletions
-INVALIDATE_TOKEN_CACHE = 'invalidate_token_cache'
+INVALIDATE_TOKEN_CACHE = 'invalidate_token_cache'  # nosec
 PERSIST_REVOCATION_EVENT_FOR_USER = 'persist_revocation_event_for_user'
 REMOVE_APP_CREDS_FOR_USER = 'remove_application_credentials_for_user'
 DOMAIN_DELETED = 'domain_deleted'
+
+
+def build_audit_initiator():
+    """A pyCADF initiator describing the current authenticated context."""
+    pycadf_host = host.Host(address=flask.request.remote_addr,
+                            agent=str(flask.request.user_agent))
+    initiator = resource.Resource(typeURI=taxonomy.ACCOUNT_USER,
+                                  host=pycadf_host)
+    oslo_context = flask.request.environ.get(context.REQUEST_CONTEXT_ENV)
+    if oslo_context.user_id:
+        initiator.id = utils.resource_uuid(oslo_context.user_id)
+        initiator.user_id = oslo_context.user_id
+
+    if oslo_context.project_id:
+        initiator.project_id = oslo_context.project_id
+
+    if oslo_context.domain_id:
+        initiator.domain_id = oslo_context.domain_id
+
+    initiator.request_id = oslo_context.request_id
+
+    if oslo_context.global_request_id:
+        initiator.global_request_id = oslo_context.global_request_id
+
+    return initiator
 
 
 class Audit(object):
@@ -116,7 +146,8 @@ class Audit(object):
             operation,
             resource_type,
             resource_id,
-            actor_dict,
+            initiator=initiator,
+            actor_dict=actor_dict,
             public=public)
 
         if CONF.notification_format == 'cadf' and public:
@@ -247,9 +278,10 @@ def register_event_callback(event, resource_type, callbacks):
 
     for callback in callbacks:
         if not callable(callback):
-            msg = _('Method not callable: %s') % callback
+            msg = 'Method not callable: %s' % callback
+            tr_msg = _('Method not callable: %s') % callback
             LOG.error(msg)
-            raise TypeError(msg)
+            raise TypeError(tr_msg)
         _SUBSCRIBERS.setdefault(event, {}).setdefault(resource_type, set())
         _SUBSCRIBERS[event][resource_type].add(callback)
 
@@ -396,6 +428,13 @@ def _create_cadf_payload(operation, resource_type, resource_id,
         target_uri = taxonomy.UNKNOWN
     else:
         target_uri = CADF_TYPE_MAP.get(resource_type)
+
+    # TODO(gagehugo): The root domain ID is typically hidden, there isn't a
+    # reason to emit a notification for it. Once we expose the root domain
+    # (and handle the CADF UUID), remove this.
+    if resource_id == ROOT_DOMAIN:
+        return
+
     target = resource.Resource(typeURI=target_uri,
                                id=resource_id)
 
@@ -407,8 +446,8 @@ def _create_cadf_payload(operation, resource_type, resource_id,
                              target, event_type, reason=reason, **audit_kwargs)
 
 
-def _send_notification(operation, resource_type, resource_id, actor_dict=None,
-                       public=True):
+def _send_notification(operation, resource_type, resource_id, initiator=None,
+                       actor_dict=None, public=True):
     """Send notification to inform observers about the affected resource.
 
     This method doesn't raise an exception when sending the notification fails.
@@ -416,6 +455,7 @@ def _send_notification(operation, resource_type, resource_id, actor_dict=None,
     :param operation: operation being performed (created, updated, or deleted)
     :param resource_type: type of resource being operated on
     :param resource_id: ID of resource being operated on
+    :param initiator: representation of the user that created the request
     :param actor_dict: a dictionary containing the actor's ID and type
     :param public:  if True (default), the event will be sent
                     to the notifier API.
@@ -428,6 +468,12 @@ def _send_notification(operation, resource_type, resource_id, actor_dict=None,
         payload['actor_id'] = actor_dict['id']
         payload['actor_type'] = actor_dict['type']
         payload['actor_operation'] = actor_dict['actor_operation']
+
+    if initiator:
+        payload['request_id'] = initiator.request_id
+        global_request_id = getattr(initiator, 'global_request_id', None)
+        if global_request_id:
+            payload['global_request_id'] = global_request_id
 
     notify_event_callbacks(SERVICE, resource_type, operation, payload)
 
@@ -514,29 +560,32 @@ class CadfNotificationWrapper(object):
 
     def __call__(self, f):
         @functools.wraps(f)
-        def wrapper(wrapped_self, request, user_id, *args, **kwargs):
+        def wrapper(wrapped_self, user_id, *args, **kwargs):
             """Will always send a notification."""
             target = resource.Resource(typeURI=taxonomy.ACCOUNT_USER)
+            initiator = build_audit_initiator()
+            initiator.user_id = user_id
+            initiator.id = utils.resource_uuid(user_id)
             try:
-                result = f(wrapped_self, request, user_id, *args, **kwargs)
+                result = f(wrapped_self, user_id, *args, **kwargs)
             except (exception.AccountLocked,
                     exception.PasswordExpired) as ex:
                 # Send a CADF event with a reason for PCI-DSS related
                 # authentication failures
                 audit_reason = reason.Reason(str(ex), str(ex.code))
-                _send_audit_notification(self.action, request.audit_initiator,
+                _send_audit_notification(self.action, initiator,
                                          taxonomy.OUTCOME_FAILURE,
                                          target, self.event_type,
                                          reason=audit_reason)
                 raise
             except Exception:
                 # For authentication failure send a CADF event as well
-                _send_audit_notification(self.action, request.audit_initiator,
+                _send_audit_notification(self.action, initiator,
                                          taxonomy.OUTCOME_FAILURE,
                                          target, self.event_type)
                 raise
             else:
-                _send_audit_notification(self.action, request.audit_initiator,
+                _send_audit_notification(self.action, initiator,
                                          taxonomy.OUTCOME_SUCCESS,
                                          target, self.event_type)
                 return result
@@ -609,9 +658,7 @@ class CadfRoleAssignmentNotificationWrapper(object):
             call_args = inspect.getcallargs(
                 f, wrapped_self, role_id, *args, **kwargs)
             inherited = call_args['inherited_to_projects']
-            context = call_args['context']
-
-            initiator = _get_request_audit_info(context)
+            initiator = call_args.get('initiator', None)
             target = resource.Resource(typeURI=taxonomy.ACCOUNT_USER)
 
             audit_kwargs = {}
@@ -646,15 +693,13 @@ class CadfRoleAssignmentNotificationWrapper(object):
         return wrapper
 
 
-def send_saml_audit_notification(action, request, user_id, group_ids,
+def send_saml_audit_notification(action, user_id, group_ids,
                                  identity_provider, protocol, token_id,
                                  outcome):
     """Send notification to inform observers about SAML events.
 
     :param action: Action being audited
     :type action: str
-    :param request: Current request to collect request info from
-    :type request: keystone.common.request.Request
     :param user_id: User ID from Keystone token
     :type user_id: str
     :param group_ids: List of Group IDs from Keystone token
@@ -668,7 +713,7 @@ def send_saml_audit_notification(action, request, user_id, group_ids,
     :param outcome: One of :class:`pycadf.cadftaxonomy`
     :type outcome: str
     """
-    initiator = request.audit_initiator
+    initiator = build_audit_initiator()
     target = resource.Resource(typeURI=taxonomy.ACCOUNT_USER)
     audit_type = SAML_AUDIT_TYPE
     user_id = user_id or taxonomy.UNKNOWN

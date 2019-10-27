@@ -23,42 +23,64 @@ contains the same headers and HTTP status code as the corresponding GET API.
 
 For information about Identity API protection, see
 `Identity API protection with role-based access control (RBAC)
-<https://docs.openstack.org/keystone/latest/admin/identity-service-api-protection.html>`_
+<https://docs.openstack.org/keystone/latest/admin/service-api-protection.html>`_
 in the OpenStack Cloud Administrator Guide.
 
-==========================
-What's New in Version 3.10
-==========================
+==================================
+What's New in Version 3.13 (Train)
+==================================
+
+- New parameter access_rules for application credentials
+- New read-only API /v3/users/{user_id}/access_rules for viewing access rules
+
+==================================
+What's New in Version 3.12 (Stein)
+==================================
+
+- New optional multi-factor auth process involving auth receipts
+
+==================================
+What's New in Version 3.11 (Rocky)
+==================================
+
+- New endpoint /v3/limits-model for discovering the limit model in effect
+- New description field in registered and project limits
+- New project_id filters for project limits
+- New parameter include_limits for project detail query
+
+===================================
+What's New in Version 3.10 (Queens)
+===================================
 
 - Introduction of the Application Credentials API.
 - Introduction of an experimental Unified Limits API.
 - Ability to grant system role assignments and obtain system-scoped tokens.
 
-=========================
-What's New in Version 3.9
-=========================
+==================================
+What's New in Version 3.9 (Queens)
+==================================
 
 - Addition of ``tags`` attribute to project.
 - New APIs to interact with the ``tags`` attribute.
 
-=========================
-What's New in Version 3.8
-=========================
+=================================
+What's New in Version 3.8 (Ocata)
+=================================
 
 - Allow a service user to fetch a token that has expired.
 - Add a ``password_expires_at`` query parameter to user list and users in
   group list.
 
-=========================
-What's New in Version 3.7
-=========================
+==================================
+What's New in Version 3.7 (Newton)
+==================================
 
 - Addition of the ``password_expires_at`` field to the user response object.
 - Introduce a flag to bypass expiration and revocation checking.
 
-=========================
-What's New in Version 3.6
-=========================
+==================================
+What's New in Version 3.6 (Mitaka)
+==================================
 
 - Listing role assignments for a tree of projects.
 - Setting the project ``is_domain`` attribute enables a project to behave as
@@ -78,18 +100,18 @@ What's New in Version 3.6
 - Support ``enabled`` and ``id`` as optional attributes to filter identity
   providers when listing.
 
-=========================
-What's New in Version 3.5
-=========================
+===================================
+What's New in Version 3.5 (Liberty)
+===================================
 
 - Addition of ``type`` optional attribute to list credentials.
 - Addition of ``region_id`` optional attribute to list endpoints.
 - Addition of ``is_domain`` optional attribute to projects. Setting this
   currently has no effect, it is reserved for future use.
 
-=========================
-What's New in Version 3.4
-=========================
+================================
+What's New in Version 3.4 (Kilo)
+================================
 
 - For tokenless authorization, the scope information may be set in the
   request headers.
@@ -103,9 +125,9 @@ What's New in Version 3.4
 - The JSON Home support now will indicate the status of resource if it is not
   stable and current.
 
-=========================
-What's New in Version 3.3
-=========================
+================================
+What's New in Version 3.3 (Juno)
+================================
 
 These features are considered stable as of September 4th, 2014.
 
@@ -117,9 +139,9 @@ These features are considered stable as of September 4th, 2014.
   targets for a token.
 - Addition of ``url`` optional attribute for ``regions``.
 
-=========================
-What's New in Version 3.2
-=========================
+====================================
+What's New in Version 3.2 (Icehouse)
+====================================
 
 These features are considered stable as of January 23, 2014.
 
@@ -132,9 +154,9 @@ These features are considered stable as of January 23, 2014.
   provided if a particular deployment has limited the number of entries
   a query may return
 
-=========================
-What's New in Version 3.1
-=========================
+==================================
+What's New in Version 3.1 (Havana)
+==================================
 
 These features are considered stable as of July 18, 2013.
 
@@ -147,9 +169,9 @@ These features are considered stable as of July 18, 2013.
   creation
 - Added optional bind information to token structure
 
-=========================
-What's New in Version 3.0
-=========================
+===================================
+What's New in Version 3.0 (Grizzly)
+===================================
 
 These features are considered stable as of February 20, 2013.
 
@@ -201,7 +223,7 @@ This page lists the Identity API operations in the following order:
 * `Unified Limits`_
 * `Users`_
 * `OS-INHERIT`_
-* `OS-PKI`_
+* `OS-PKI (DEPRECATED)`_
 
 .. rest_expand_all::
 

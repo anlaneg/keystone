@@ -39,6 +39,7 @@ WARNING::
 """
 
 import datetime
+import glob
 import json
 import os
 import uuid
@@ -52,6 +53,7 @@ from oslo_db import exception as db_exception
 from oslo_db.sqlalchemy import enginefacade
 from oslo_db.sqlalchemy import test_fixtures as db_fixtures
 from oslo_log import log
+from oslo_serialization import jsonutils
 from oslotest import base as test_base
 import pytz
 from sqlalchemy.engine import reflection
@@ -250,16 +252,15 @@ class SqlMigrateBase(db_fixtures.OpportunisticDBTestMixin,
         """A collection of tables and their associated schemas."""
         return sqlalchemy.MetaData(self.engine)
 
-    def select_table(self, name):
+    def load_table(self, name):
         table = sqlalchemy.Table(name,
                                  self.metadata,
                                  autoload=True)
-        s = sqlalchemy.select([table])
-        return s
+        return table
 
     def assertTableExists(self, table_name):
         try:
-            self.select_table(table_name)
+            self.load_table(table_name)
         except sqlalchemy.exc.NoSuchTableError:
             raise AssertionError('Table "%s" does not exist' % table_name)
 
@@ -292,7 +293,7 @@ class SqlMigrateBase(db_fixtures.OpportunisticDBTestMixin,
 
     def assertTableColumns(self, table_name, expected_cols):
         """Assert that the table contains the expected set of columns."""
-        table = self.select_table(table_name)
+        table = self.load_table(table_name)
         actual_cols = [col.name for col in table.columns]
         # Check if the columns are equal, but allow for a different order,
         # which might occur after an upgrade followed by a downgrade
@@ -331,13 +332,15 @@ class SqlMigrateBase(db_fixtures.OpportunisticDBTestMixin,
         table = sqlalchemy.Table(table_name, self.metadata, autoload=True)
         return index_name in [idx.name for idx in table.indexes]
 
-    def does_unique_constraint_exist(self, table_name, column_name):
+    def does_unique_constraint_exist(self, table_name, column_names):
         inspector = reflection.Inspector.from_engine(self.engine)
         constraints = inspector.get_unique_constraints(table_name)
         for c in constraints:
             if (len(c['column_names']) == 1 and
-                    column_name in c['column_names']):
+                    column_names in c['column_names']):
                 return True
+            if (len(c['column_names'])) > 1 and isinstance(column_names, list):
+                return set(c['column_names']) == set(column_names)
         return False
 
 
@@ -929,6 +932,8 @@ class SqlLegacyRepoUpgradeTests(SqlMigrateBase):
         self.assertThat(implied_roles, matchers.HasLength(0))
 
     def test_domain_as_project_upgrade(self):
+        self.skipTest('Domain as Project Upgrade Test is no longer needed and '
+                      'unfortunately broken by the resource options code.')
 
         def _populate_domain_and_project_tables(session):
             # Three domains, with various different attributes
@@ -1670,22 +1675,22 @@ class VersionTests(SqlMigrateBase):
         """
         versions_path = '/versions'
         # test for expand prefix, e.g. 001_expand_new_fk_constraint.py
-        expand_list = os.listdir(
-            self.repos[EXPAND_REPO].repo_path + versions_path)
+        expand_list = glob.glob(
+            self.repos[EXPAND_REPO].repo_path + versions_path + '/*.py')
         self.assertRepoFileNamePrefix(expand_list, 'expand')
         # test for migrate prefix, e.g. 001_migrate_new_fk_constraint.py
-        migrate_list = os.listdir(
-            self.repos[DATA_MIGRATION_REPO].repo_path + versions_path)
+        repo_path = self.repos[DATA_MIGRATION_REPO].repo_path
+        migrate_list = glob.glob(repo_path + versions_path + '/*.py')
         self.assertRepoFileNamePrefix(migrate_list, 'migrate')
         # test for contract prefix, e.g. 001_contract_new_fk_constraint.py
-        contract_list = os.listdir(
-            self.repos[CONTRACT_REPO].repo_path + versions_path)
+        contract_list = glob.glob(
+            self.repos[CONTRACT_REPO].repo_path + versions_path + '/*.py')
         self.assertRepoFileNamePrefix(contract_list, 'contract')
 
     def assertRepoFileNamePrefix(self, repo_list, prefix):
         if len(repo_list) > 1:
             # grab the file name for the max version
-            file_name = sorted(repo_list)[-2]
+            file_name = os.path.basename(sorted(repo_list)[-2])
             # pattern for the prefix standard, ignoring placeholder, init files
             pattern = (
                 '^[0-9]{3,}_PREFIX_|^[0-9]{3,}_placeholder.py|^__init__.py')
@@ -2929,6 +2934,530 @@ class FullMigration(SqlMigrateBase, unit.TestCase):
         registered_limit_table = sqlalchemy.Table(registered_limit_table_name,
                                                   self.metadata, autoload=True)
         self.assertEqual(set([]), registered_limit_table.foreign_keys)
+
+    def test_migration_045_add_description_to_limit(self):
+
+        self.expand(44)
+        self.migrate(44)
+        self.contract(44)
+
+        registered_limit_table_name = 'registered_limit'
+        limit_table_name = 'limit'
+
+        self.assertTableExists(registered_limit_table_name)
+        self.assertTableExists(limit_table_name)
+        self.assertTableColumns(
+            registered_limit_table_name,
+            ['id', 'service_id', 'region_id', 'resource_name', 'default_limit']
+        )
+        self.assertTableColumns(
+            limit_table_name,
+            ['id', 'project_id', 'service_id', 'region_id', 'resource_name',
+             'resource_limit']
+        )
+
+        self.expand(45)
+        self.migrate(45)
+        self.contract(45)
+
+        registered_limit_table = sqlalchemy.Table(registered_limit_table_name,
+                                                  self.metadata, autoload=True)
+        limit_table = sqlalchemy.Table(limit_table_name,
+                                       self.metadata, autoload=True)
+        self.assertTableColumns(
+            registered_limit_table_name,
+            ['id', 'service_id', 'region_id', 'resource_name', 'default_limit',
+             'description']
+        )
+        self.assertTableColumns(
+            limit_table_name,
+            ['id', 'project_id', 'service_id', 'region_id', 'resource_name',
+             'resource_limit', 'description']
+        )
+
+        session = self.sessionmaker()
+        service_id = uuid.uuid4().hex
+        service = {
+            'id': service_id,
+            'type': 'compute',
+            'enabled': True
+        }
+        region = {
+            'id': 'RegionOne',
+            'description': 'test'
+        }
+        project_id = uuid.uuid4().hex
+        project = {
+            'id': project_id,
+            'name': 'nova',
+            'enabled': True,
+            'domain_id': resource_base.NULL_DOMAIN_ID,
+            'is_domain': False
+        }
+        self.insert_dict(session, 'service', service)
+        self.insert_dict(session, 'region', region)
+        self.insert_dict(session, 'project', project)
+
+        # with description
+        registered_limit = {
+            'id': uuid.uuid4().hex,
+            'service_id': service_id,
+            'region_id': 'RegionOne',
+            'resource_name': 'cores',
+            'default_limit': 10,
+            'description': 'this is a description'
+        }
+        registered_limit_table.insert().values(registered_limit).execute()
+
+        # without description
+        limit = {
+            'id': uuid.uuid4().hex,
+            'project_id': project_id,
+            'service_id': service_id,
+            'region_id': 'RegionOne',
+            'resource_name': 'cores',
+            'resource_limit': 5
+        }
+        limit_table.insert().values(limit).execute()
+
+    def test_migration_046_copies_data_from_password_to_password_hash(self):
+        self.expand(46)
+        self.migrate(45)
+        self.contract(45)
+        # Create User and Local User
+        project_table = sqlalchemy.Table('project', self.metadata,
+                                         autoload=True)
+        domain_data = {'id': '_domain', 'domain_id': '_domain',
+                       'enabled': True, 'name': '_domain', 'is_domain': True}
+        project_table.insert().values(domain_data).execute()
+        user_table = sqlalchemy.Table('user', self.metadata, autoload=True)
+        user_id = uuid.uuid4().hex
+        user = {'id': user_id, 'enabled': True, 'domain_id': domain_data['id']}
+        user_table.insert().values(user).execute()
+        local_user_table = sqlalchemy.Table('local_user', self.metadata,
+                                            autoload=True)
+        local_user = {
+            'id': 1, 'user_id': user_id, 'domain_id': user['domain_id'],
+            'name': 'name'}
+
+        local_user_table.insert().values(local_user).execute()
+
+        password_table = sqlalchemy.Table('password',
+                                          self.metadata, autoload=True)
+        password_data = {
+            'local_user_id': local_user['id'],
+            'created_at': datetime.datetime.utcnow(),
+            'expires_at': datetime.datetime.utcnow(),
+            'password': uuid.uuid4().hex}
+        password_data1 = {
+            'local_user_id': local_user['id'],
+            'created_at': datetime.datetime.utcnow(),
+            'expires_at': datetime.datetime.utcnow(),
+            'password_hash': uuid.uuid4().hex}
+        password_data2 = {
+            'local_user_id': local_user['id'],
+            'created_at': datetime.datetime.utcnow(),
+            'expires_at': datetime.datetime.utcnow(),
+            'password': uuid.uuid4().hex,
+            'password_hash': uuid.uuid4().hex}
+        password_table.insert().values(password_data).execute()
+        password_table.insert().values(password_data1).execute()
+        password_table.insert().values(password_data2).execute()
+        self.migrate(46)
+        passwords = list(password_table.select().execute())
+        for p in passwords:
+            if p.password == password_data['password']:
+                self.assertEqual(p.password_hash, p.password)
+                self.assertIsNotNone(p.password)
+                self.assertIsNotNone(p.password_hash)
+            elif p.password_hash == password_data1['password_hash']:
+                self.assertIsNone(p.password)
+                self.assertIsNotNone(p.password_hash)
+            elif p.password_hash == password_data2['password_hash']:
+                self.assertIsNotNone(p.password)
+                self.assertIsNotNone(p.password_hash)
+                self.assertNotEqual(p.password, p.password_hash)
+            else:
+                raise ValueError('Too Many Passwords Found')
+
+    def test_migration_047_add_auto_increment_pk_column_to_unified_limit(self):
+        self.expand(46)
+        self.migrate(46)
+        self.contract(46)
+        registered_limit_table_name = 'registered_limit'
+        limit_table_name = 'limit'
+        self.assertTableColumns(
+            registered_limit_table_name,
+            ['id', 'service_id', 'region_id', 'resource_name', 'default_limit',
+             'description']
+        )
+        self.assertTableColumns(
+            limit_table_name,
+            ['id', 'project_id', 'service_id', 'region_id', 'resource_name',
+             'resource_limit', 'description']
+        )
+        self.assertTrue(self.does_pk_exist('registered_limit', 'id'))
+        self.assertTrue(self.does_pk_exist('limit', 'id'))
+        self.assertTrue(self.does_fk_exist('limit', 'project_id'))
+
+        self.expand(47)
+        self.migrate(47)
+        self.contract(47)
+        self.assertTableColumns(
+            registered_limit_table_name,
+            ['id', 'service_id', 'region_id', 'resource_name', 'default_limit',
+             'description', 'internal_id']
+        )
+        self.assertTableColumns(
+            limit_table_name,
+            ['id', 'project_id', 'service_id', 'region_id', 'resource_name',
+             'resource_limit', 'description', 'internal_id']
+        )
+        self.assertFalse(self.does_pk_exist('registered_limit', 'id'))
+        self.assertTrue(self.does_pk_exist('registered_limit', 'internal_id'))
+        self.assertFalse(self.does_pk_exist('limit', 'id'))
+        self.assertTrue(self.does_pk_exist('limit', 'internal_id'))
+        limit_table = sqlalchemy.Table(limit_table_name,
+                                       self.metadata, autoload=True)
+        self.assertEqual(set([]), limit_table.foreign_keys)
+
+    def test_migration_048_add_registered_limit_id_column_for_limit(self):
+        self.expand(47)
+        self.migrate(47)
+        self.contract(47)
+
+        limit_table_name = 'limit'
+        self.assertTableColumns(
+            limit_table_name,
+            ['id', 'project_id', 'service_id', 'region_id', 'resource_name',
+             'resource_limit', 'description', 'internal_id']
+        )
+
+        self.expand(48)
+        self.migrate(48)
+        self.contract(48)
+
+        self.assertTableColumns(
+            limit_table_name,
+            ['id', 'project_id', 'service_id', 'region_id', 'resource_name',
+             'resource_limit', 'description', 'internal_id',
+             'registered_limit_id']
+        )
+        self.assertTrue(self.does_fk_exist('limit', 'registered_limit_id'))
+
+    def test_migration_053_adds_description_to_role(self):
+        self.expand(52)
+        self.migrate(52)
+        self.contract(52)
+
+        role_table_name = 'role'
+        self.assertTableColumns(
+            role_table_name,
+            ['id', 'name', 'domain_id', 'extra']
+        )
+
+        self.expand(53)
+        self.migrate(53)
+        self.contract(53)
+
+        self.assertTableColumns(
+            role_table_name,
+            ['id', 'name', 'domain_id', 'extra', 'description']
+        )
+
+        role_table = sqlalchemy.Table(
+            role_table_name, self.metadata, autoload=True
+        )
+
+        role = {
+            'id': uuid.uuid4().hex,
+            'name': "test",
+            'domain_id': resource_base.NULL_DOMAIN_ID,
+            'description': "This is a string"
+        }
+        role_table.insert().values(role).execute()
+
+        role_without_description = {
+            'id': uuid.uuid4().hex,
+            'name': "test1",
+            'domain_id': resource_base.NULL_DOMAIN_ID
+        }
+        role_table.insert().values(role_without_description).execute()
+
+    def test_migration_054_drop_old_password_column(self):
+        self.expand(53)
+        self.migrate(53)
+        self.contract(53)
+
+        password_table = 'password'
+        self.assertTableColumns(
+            password_table,
+            ['id', 'local_user_id', 'password', 'password_hash',
+             'self_service', 'created_at_int', 'created_at', 'expires_at_int',
+             'expires_at']
+        )
+
+        self.expand(54)
+        self.migrate(54)
+        self.contract(54)
+
+        self.assertTableColumns(
+            password_table,
+            ['id', 'local_user_id', 'password_hash', 'self_service',
+             'created_at_int', 'created_at', 'expires_at_int', 'expires_at']
+        )
+
+    def test_migration_055_add_domain_to_limit(self):
+        self.expand(54)
+        self.migrate(54)
+        self.contract(54)
+
+        limit_table_name = 'limit'
+        limit_table = sqlalchemy.Table(limit_table_name, self.metadata,
+                                       autoload=True)
+        self.assertFalse(hasattr(limit_table.c, 'domain_id'))
+
+        self.expand(55)
+        self.migrate(55)
+        self.contract(55)
+
+        self.assertTableColumns(
+            limit_table_name,
+            ['id', 'project_id', 'service_id', 'region_id', 'resource_name',
+             'resource_limit', 'description', 'internal_id',
+             'registered_limit_id', 'domain_id'])
+        self.assertTrue(limit_table.c.project_id.nullable)
+
+    def test_migration_056_add_application_credential_access_rules(self):
+        self.expand(55)
+        self.migrate(55)
+        self.contract(55)
+
+        self.assertTableDoesNotExist('access_rule')
+        self.assertTableDoesNotExist('application_credential_access_rule')
+
+        self.expand(56)
+        self.migrate(56)
+        self.contract(56)
+
+        self.assertTableExists('access_rule')
+        self.assertTableExists('application_credential_access_rule')
+        self.assertTableColumns(
+            'access_rule',
+            ['id', 'service', 'path', 'method']
+        )
+        self.assertTableColumns(
+            'application_credential_access_rule',
+            ['application_credential_id', 'access_rule_id']
+        )
+        self.assertTrue(self.does_fk_exist(
+            'application_credential_access_rule', 'application_credential_id'))
+        self.assertTrue(self.does_fk_exist(
+            'application_credential_access_rule', 'access_rule_id'))
+
+        app_cred_table = sqlalchemy.Table(
+            'application_credential', self.metadata, autoload=True
+        )
+        access_rule_table = sqlalchemy.Table(
+            'access_rule', self.metadata, autoload=True
+        )
+        app_cred_access_rule_table = sqlalchemy.Table(
+            'application_credential_access_rule',
+            self.metadata, autoload=True
+        )
+        app_cred = {
+            'internal_id': 1,
+            'id': uuid.uuid4().hex,
+            'name': uuid.uuid4().hex,
+            'secret_hash': uuid.uuid4().hex,
+            'user_id': uuid.uuid4().hex,
+            'project_id': uuid.uuid4().hex
+        }
+        app_cred_table.insert().values(app_cred).execute()
+        access_rule = {
+            'id': 1,
+            'service': uuid.uuid4().hex,
+            'path': '/v2.1/servers',
+            'method': 'GET'
+        }
+        access_rule_table.insert().values(access_rule).execute()
+        app_cred_access_rule_rel = {
+            'application_credential_id': app_cred['internal_id'],
+            'access_rule_id': access_rule['id']
+        }
+        app_cred_access_rule_table.insert().values(
+            app_cred_access_rule_rel).execute()
+
+    def test_migration_062_add_trust_redelegation(self):
+        # ensure initial schema
+        self.expand(61)
+        self.migrate(61)
+        self.contract(61)
+        self.assertTableColumns('trust', ['id',
+                                          'trustor_user_id',
+                                          'trustee_user_id',
+                                          'project_id',
+                                          'impersonation',
+                                          'expires_at',
+                                          'expires_at_int',
+                                          'remaining_uses',
+                                          'deleted_at',
+                                          'extra'])
+
+        # fixture
+        trust = {
+            'id': uuid.uuid4().hex,
+            'trustor_user_id': uuid.uuid4().hex,
+            'trustee_user_id': uuid.uuid4().hex,
+            'project_id': uuid.uuid4().hex,
+            'impersonation': True,
+            'expires_at': datetime.datetime.now(),
+            'remaining_uses': 10,
+            'deleted_at': datetime.datetime.now(),
+            'redelegated_trust_id': uuid.uuid4().hex,
+            'redelegation_count': 3,
+            'other': uuid.uuid4().hex
+        }
+        old_trust = trust.copy()
+        old_extra = {
+            'redelegated_trust_id': old_trust.pop('redelegated_trust_id'),
+            'redelegation_count': old_trust.pop('redelegation_count'),
+            'other': old_trust.pop('other')
+        }
+        old_trust['extra'] = jsonutils.dumps(old_extra)
+        # load fixture
+        session = self.sessionmaker()
+        self.insert_dict(session, 'trust', old_trust)
+
+        # ensure redelegation data is in extra
+        stored_trust = list(
+            session.execute(self.load_table('trust').select())
+        )[0]
+        self.assertDictEqual({
+            'redelegated_trust_id': trust['redelegated_trust_id'],
+            'redelegation_count': trust['redelegation_count'],
+            'other': trust['other']},
+            jsonutils.loads(stored_trust.extra))
+
+        # upgrade and ensure expected schema
+        self.expand(62)
+        self.migrate(62)
+        self.contract(62)
+        self.assertTableColumns('trust', ['id',
+                                          'trustor_user_id',
+                                          'trustee_user_id',
+                                          'project_id',
+                                          'impersonation',
+                                          'expires_at',
+                                          'expires_at_int',
+                                          'remaining_uses',
+                                          'deleted_at',
+                                          'redelegated_trust_id',
+                                          'redelegation_count',
+                                          'extra'])
+
+        trust_table = sqlalchemy.Table('trust', self.metadata, autoload=True)
+        self.assertTrue(trust_table.c.redelegated_trust_id.nullable)
+        self.assertTrue(trust_table.c.redelegation_count.nullable)
+
+        # test target data layout
+        upgraded_trust = list(
+            session.execute(self.load_table('trust').select())
+        )[0]
+        self.assertDictEqual({'other': trust['other']},
+                             jsonutils.loads(upgraded_trust.extra))
+        self.assertEqual(trust['redelegated_trust_id'],
+                         upgraded_trust.redelegated_trust_id)
+        self.assertEqual(trust['redelegation_count'],
+                         upgraded_trust.redelegation_count)
+
+    def test_migration_063_drop_limit_columns(self):
+        self.expand(62)
+        self.migrate(62)
+        self.contract(62)
+
+        limit_table = 'limit'
+        self.assertTableColumns(
+            limit_table,
+            ['id', 'project_id', 'service_id', 'region_id', 'resource_name',
+             'resource_limit', 'description', 'internal_id',
+             'registered_limit_id', 'domain_id'])
+
+        self.expand(63)
+        self.migrate(63)
+        self.contract(63)
+
+        self.assertTableColumns(
+            limit_table,
+            ['id', 'project_id', 'resource_limit', 'description',
+             'internal_id', 'registered_limit_id', 'domain_id'])
+
+    def test_migration_064_add_remote_id_attribute_federation_protocol(self):
+        self.expand(63)
+        self.migrate(63)
+        self.contract(63)
+
+        federation_protocol_table_name = 'federation_protocol'
+        self.assertTableColumns(
+            federation_protocol_table_name,
+            ['id', 'idp_id', 'mapping_id']
+        )
+
+        self.expand(64)
+        self.migrate(64)
+        self.contract(64)
+
+        self.assertTableColumns(
+            federation_protocol_table_name,
+            ['id', 'idp_id', 'mapping_id', 'remote_id_attribute']
+        )
+
+    def test_migration_065_add_user_external_id_to_access_rule(self):
+        self.expand(64)
+        self.migrate(64)
+        self.contract(64)
+
+        self.assertTableColumns(
+            'access_rule',
+            ['id', 'service', 'path', 'method']
+        )
+
+        self.expand(65)
+        self.migrate(65)
+        self.contract(65)
+
+        self.assertTableColumns(
+            'access_rule',
+            ['id', 'external_id', 'user_id', 'service', 'path', 'method']
+        )
+        self.assertTrue(self.does_index_exist('access_rule', 'external_id'))
+        self.assertTrue(self.does_index_exist('access_rule', 'user_id'))
+        self.assertTrue(self.does_unique_constraint_exist(
+            'access_rule', 'external_id'))
+        self.assertTrue(self.does_unique_constraint_exist(
+            'access_rule', ['user_id', 'service', 'path', 'method']))
+
+    def test_migration_066_add_role_and_prject_options_tables(self):
+        self.expand(65)
+        self.migrate(65)
+        self.contract(65)
+
+        role_option = 'role_option'
+        project_option = 'project_option'
+        self.assertTableDoesNotExist(role_option)
+        self.assertTableDoesNotExist(project_option)
+
+        self.expand(66)
+        self.migrate(66)
+        self.contract(66)
+
+        self.assertTableColumns(
+            project_option,
+            ['project_id', 'option_id', 'option_value'])
+
+        self.assertTableColumns(
+            role_option,
+            ['role_id', 'option_id', 'option_value'])
 
 
 class MySQLOpportunisticFullMigration(FullMigration):

@@ -127,13 +127,6 @@ Catalog
 The Catalog service provides an endpoint registry used for endpoint discovery.
 
 
-Policy
-------
-
-The Policy service provides a rule-based authorization engine and the
-associated rule management interface.
-
-
 Application Construction
 ========================
 
@@ -145,7 +138,7 @@ of pipelines of WSGI middleware, such as:
 .. code-block:: ini
 
     [pipeline:api_v3]
-    pipeline = healthcheck cors sizelimit http_proxy_to_wsgi osprofiler url_normalize request_id build_auth_context token_auth json_body ec2_extension_v3 s3_extension service_v3
+    pipeline = healthcheck cors sizelimit http_proxy_to_wsgi osprofiler url_normalize request_id build_auth_context json_body ec2_extension_v3 s3_extension service_v3
 
 
 These in turn use a subclass of :mod:`keystone.common.wsgi.ComposingRouter` to
@@ -311,8 +304,8 @@ While it is expected that any "real" deployment at a large company will manage
 their users and groups in their existing user systems, a variety of CRUD
 operations are provided for the sake of development and testing.
 
-CRUD is treated as an extension or additional feature to the core feature set
-in that it is not required that a backend support it. It is expected that
+CRUD is treated as an extension or additional feature to the core feature set,
+in that a backend is not required to support it. It is expected that
 backends for services that don't support the CRUD operations will raise a
 :mod:`keystone.exception.NotImplemented`.
 
@@ -332,7 +325,7 @@ being checked for:
 Other systems wishing to use the policy engine will require additional styles
 of checks and will possibly write completely custom backends. By default,
 keystone leverages policy enforcement that is maintained in `oslo.policy
-<https://git.openstack.org/cgit/openstack/oslo.policy/>`_.
+<https://opendev.org/openstack/oslo.policy/>`_.
 
 
 Rules

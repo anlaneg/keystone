@@ -89,17 +89,22 @@ def validate_oauth_params(query_string):
     params_fitered = {k: v for k, v in params if not k.startswith('oauth_')}
     if params_fitered:
         if 'error' in params_fitered:
-            msg = _(
+            msg = (
                 'Validation failed with errors: %(error)s, detail '
                 'message is: %(desc)s.') % {
                     'error': params_fitered['error'],
                     'desc': params_fitered['error_description']}
+            tr_msg = _('Validation failed with errors: %(error)s, detail '
+                       'message is: %(desc)s.') % {
+                'error': params_fitered['error'],
+                'desc': params_fitered['error_description']}
         else:
-            msg = _(
-                'Unknown parameters found, '
-                'please provide only oauth parameters.')
+            msg = ('Unknown parameters found,'
+                   'please provide only oauth parameters.')
+            tr_msg = _('Unknown parameters found,'
+                       'please provide only oauth parameters.')
         LOG.warning(msg)
-        raise exception.ValidationError(message=msg)
+        raise exception.ValidationError(message=tr_msg)
 
 
 class Manager(manager.Manager):
@@ -113,8 +118,8 @@ class Manager(manager.Manager):
     driver_namespace = 'keystone.oauth1'
     _provides_api = 'oauth_api'
 
-    _ACCESS_TOKEN = "OS-OAUTH1:access_token"
-    _REQUEST_TOKEN = "OS-OAUTH1:request_token"
+    _ACCESS_TOKEN = "OS-OAUTH1:access_token"  # nosec
+    _REQUEST_TOKEN = "OS-OAUTH1:request_token"  # nosec
     _CONSUMER = "OS-OAUTH1:consumer"
 
     def __init__(self):

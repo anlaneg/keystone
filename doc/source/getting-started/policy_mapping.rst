@@ -28,14 +28,16 @@ identity:delete_endpoint                                   DELETE /v3/endpoints/
 identity:get_registered_limit                              GET /v3/registered_limits/{registered_limit_id}
 identity:list_registered_limits                            GET /v3/registered_limits
 identity:create_registered_limits                          POST /v3/registered_limits
-identity:update_registered_limits                          PUT /v3/registered_limits
+identity:update_registered_limit                           PATCH /v3/registered_limits/{registered_limit_id}
 identity:delete_registered_limit                           DELETE /v3/registered_limits/{registered_limit_id}
 
 identity:get_limit                                         GET /v3/limits/{limit_id}
 identity:list_limits                                       GET /v3/limits
 identity:create_limits                                     POST /v3/limits
-identity:update_limits                                     PUT /v3/limits
+identity:update_limit                                      PATCH /v3/limits/{limit_id}
 identity:delete_limit                                      DELETE /v3/limits/{limit_id}
+identity:get_limit_model                                   GET /v3/limits/model
+                                                           HEAD /v3/limits/model
 
 identity:get_domain                                        GET /v3/domains/{domain_id}
 identity:list_domains                                      GET /v3/domains
@@ -136,6 +138,8 @@ identity:revocation_list                                   GET /v3/auth/tokens/O
 identity:revoke_token                                      DELETE /v3/auth/tokens
 identity:create_trust                                      POST /v3/OS-TRUST/trusts
 identity:list_trusts                                       GET /v3/OS-TRUST/trusts
+identity:list_trusts_for_trustor                           GET /v3/OS-TRUST/trusts?trustor_user_id={trustor_user_id}
+identity:list_trusts_for_trustee                           GET /v3/OS-TRUST/trusts?trustee_user_id={trustee_user_id}
 identity:list_roles_for_trust                              GET /v3/OS-TRUST/trusts/{trust_id}/roles
 identity:get_role_for_trust                                GET /v3/OS-TRUST/trusts/{trust_id}/roles/{role_id}
 identity:delete_trust                                      DELETE /v3/OS-TRUST/trusts/{trust_id}
@@ -237,6 +241,11 @@ identity:get_application_credential                        GET /v3/users/{user_i
 identity:list_application_credentials                      GET /v3/users/{user_id}/application_credentials
 identity:create_application_credential                     POST /v3/users/{user_id}/application_credential
 identity:delete_application_credential                     DELETE /v3/users/{user_id}/application_credential/{application_credential_id}
+
+identity:get_access_rule                                   GET /v3/users/{user_id}/access_rules/{access_rule_id}
+identity:list_access_rules                                 GET /v3/users/{user_id}/access_rules
+identity:delete_access_rule                                DELETE /v3/users/{user_id}/access_rules/{access_rule_id}
+
 =========================================================  ===
 
 .. _grant_resources:

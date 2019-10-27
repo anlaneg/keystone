@@ -83,6 +83,11 @@ class ShadowUsersBackendTests(object):
             self.domain_id, self.federated_user)
         self.assertEqual(user['domain_id'], self.domain_id)
 
+    def test_create_federated_user_email(self):
+        user = PROVIDERS.shadow_users_api.create_federated_user(
+            self.domain_id, self.federated_user, self.email)
+        self.assertEqual(user['email'], self.email)
+
     def test_get_federated_user(self):
         user_dict_create = PROVIDERS.shadow_users_api.create_federated_user(
             self.domain_id, self.federated_user)
@@ -116,10 +121,10 @@ class ShadowUsersBackendTests(object):
         now = datetime.datetime.utcnow().date()
         password = uuid.uuid4().hex
         user = self._create_user(password)
-        user_auth = PROVIDERS.identity_api.authenticate(
-            self.make_request(),
-            user_id=user['id'],
-            password=password)
+        with self.make_request():
+            user_auth = PROVIDERS.identity_api.authenticate(
+                user_id=user['id'],
+                password=password)
         user_ref = self._get_user_ref(user_auth['id'])
         self.assertGreaterEqual(now, user_ref.last_active_at)
 
@@ -128,10 +133,10 @@ class ShadowUsersBackendTests(object):
                                    disable_user_account_days_inactive=None)
         password = uuid.uuid4().hex
         user = self._create_user(password)
-        user_auth = PROVIDERS.identity_api.authenticate(
-            self.make_request(),
-            user_id=user['id'],
-            password=password)
+        with self.make_request():
+            user_auth = PROVIDERS.identity_api.authenticate(
+                user_id=user['id'],
+                password=password)
         user_ref = self._get_user_ref(user_auth['id'])
         self.assertIsNone(user_ref.last_active_at)
 

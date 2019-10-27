@@ -19,6 +19,16 @@ Tags for projects have the following restrictions:
    - Each project can have a maximum of 80 tags
    - Each tag can be a maximum of 255 characters in length
 
+.. warning::
+
+   We discourage the use of project tags for sensitive information like billing or
+   account codes. By default, access to project tags isn't exclusive to system
+   administrators or users. Domain and project administrators are allowed to
+   tag projects they have authorization to access. Domain and project users
+   (e.g., users with the ``member`` or ``reader`` roles) can view all project
+   tags on all projects within their domain or on projects they are
+   authorized to access.
+
 
 List tags for a project
 =======================
@@ -40,7 +50,7 @@ Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - project_id: project_id
+   - project_id: project_id_path
 
 Response
 --------
@@ -73,92 +83,6 @@ Example
    :language: javascript
 
 
-Check if project contains tag
-=============================
-
-.. rest_method:: GET /v3/projects/{project_id}/tags/{tag}
-
-Checks if a project contains the specified tag.
-
-.. note::
-    HEAD can be used here as well
-
-Relationship: ``https://docs.openstack.org/api/openstack-identity/3/rel/projects``
-
-Request
--------
-
-Parameters
-~~~~~~~~~~
-
-.. rest_parameters:: parameters.yaml
-
-   - project_id: project_id
-   - tag: project_tag_path
-
-Response
---------
-
-Status Codes
-~~~~~~~~~~~~
-
-.. rest_status_code:: success status.yaml
-
-   - 204
-
-.. rest_status_code:: error status.yaml
-
-   - 400
-   - 401
-   - 403
-   - 404
-
-
-Add single tag to a project
-===========================
-
-.. rest_method:: PUT /v3/projects/{project_id}/tags/{tag}
-
-Creates the specified tag and adds it to the list of tags in the project.
-
-Relationship: ``https://docs.openstack.org/api/openstack-identity/3/rel/projects``
-
-Request
--------
-
-Parameters
-~~~~~~~~~~
-
-.. rest_parameters:: parameters.yaml
-
-   - project_id: project_id
-   - tag: project_tag_path
-
-Response
---------
-
-Parameters
-~~~~~~~~~~
-
-.. rest_parameters:: parameters.yaml
-
-   - tags: response_body_project_tags_required
-
-Status Codes
-~~~~~~~~~~~~
-
-.. rest_status_code:: success status.yaml
-
-   - 201
-
-.. rest_status_code:: error status.yaml
-
-   - 400
-   - 401
-   - 403
-   - 404
-
-
 Modify tag list for a project
 =============================
 
@@ -177,7 +101,7 @@ Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - project_id: project_id
+   - project_id: project_id_path
    - tags: response_body_project_tags_required
 
 Example
@@ -217,12 +141,12 @@ Example
    :language: javascript
 
 
-Delete single tag from project
+Remove all tags from a project
 ==============================
 
-.. rest_method:: DELETE /v3/projects/{project_id}/tags/{tag}
+.. rest_method:: DELETE /v3/projects/{project_id}/tags
 
-Remove a single tag from a project.
+Remove all tags from a given project.
 
 Relationship: ``https://docs.openstack.org/api/openstack-identity/3/rel/projects``
 
@@ -234,7 +158,46 @@ Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - project_id: project_id
+   - project_id: project_id_path
+
+Response
+--------
+
+Status Codes
+~~~~~~~~~~~~
+
+.. rest_status_code:: success status.yaml
+
+   - 204
+
+.. rest_status_code:: error status.yaml
+
+   - 400
+   - 401
+   - 403
+
+
+Check if project contains tag
+=============================
+
+.. rest_method:: GET /v3/projects/{project_id}/tags/{tag}
+
+Checks if a project contains the specified tag.
+
+.. note::
+    HEAD can be used here as well
+
+Relationship: ``https://docs.openstack.org/api/openstack-identity/3/rel/projects``
+
+Request
+-------
+
+Parameters
+~~~~~~~~~~
+
+.. rest_parameters:: parameters.yaml
+
+   - project_id: project_id_path
    - tag: project_tag_path
 
 Response
@@ -255,12 +218,12 @@ Status Codes
    - 404
 
 
-Remove all tags from a project
-==============================
+Add single tag to a project
+===========================
 
-.. rest_method:: DELETE /v3/projects/{project_id}/tags
+.. rest_method:: PUT /v3/projects/{project_id}/tags/{tag}
 
-Remove all tags from a given project.
+Creates the specified tag and adds it to the list of tags in the project.
 
 Relationship: ``https://docs.openstack.org/api/openstack-identity/3/rel/projects``
 
@@ -272,7 +235,46 @@ Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - project_id: project_id
+   - project_id: project_id_path
+   - tag: project_tag_path
+
+Response
+--------
+
+Status Codes
+~~~~~~~~~~~~
+
+.. rest_status_code:: success status.yaml
+
+   - 201
+
+.. rest_status_code:: error status.yaml
+
+   - 400
+   - 401
+   - 403
+   - 404
+
+
+Delete single tag from project
+==============================
+
+.. rest_method:: DELETE /v3/projects/{project_id}/tags/{tag}
+
+Remove a single tag from a project.
+
+Relationship: ``https://docs.openstack.org/api/openstack-identity/3/rel/projects``
+
+Request
+-------
+
+Parameters
+~~~~~~~~~~
+
+.. rest_parameters:: parameters.yaml
+
+   - project_id: project_id_path
+   - tag: project_tag_path
 
 Response
 --------

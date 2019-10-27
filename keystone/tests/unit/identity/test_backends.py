@@ -43,25 +43,25 @@ class IdentityTests(object):
             return domain_id
 
     def test_authenticate_bad_user(self):
-        self.assertRaises(AssertionError,
-                          PROVIDERS.identity_api.authenticate,
-                          self.make_request(),
-                          user_id=uuid.uuid4().hex,
-                          password=self.user_foo['password'])
+        with self.make_request():
+            self.assertRaises(AssertionError,
+                              PROVIDERS.identity_api.authenticate,
+                              user_id=uuid.uuid4().hex,
+                              password=self.user_foo['password'])
 
     def test_authenticate_bad_password(self):
-        self.assertRaises(AssertionError,
-                          PROVIDERS.identity_api.authenticate,
-                          self.make_request(),
-                          user_id=self.user_foo['id'],
-                          password=uuid.uuid4().hex)
+        with self.make_request():
+            self.assertRaises(AssertionError,
+                              PROVIDERS.identity_api.authenticate,
+                              user_id=self.user_foo['id'],
+                              password=uuid.uuid4().hex)
 
     def test_authenticate(self):
-        user_ref = PROVIDERS.identity_api.authenticate(
-            self.make_request(),
-            user_id=self.user_sna['id'],
-            password=self.user_sna['password'])
-        # NOTE(termie): the password field is left in user_sna to make
+        with self.make_request():
+            user_ref = PROVIDERS.identity_api.authenticate(
+                user_id=self.user_sna['id'],
+                password=self.user_sna['password'])
+            # NOTE(termie): the password field is left in user_sna to make
         #               it easier to authenticate in tests, but should
         #               not be returned by the api
         self.user_sna.pop('password')
@@ -81,12 +81,12 @@ class IdentityTests(object):
         PROVIDERS.role_api.create_role(role_member['id'], role_member)
 
         PROVIDERS.assignment_api.add_role_to_user_and_project(
-            new_user['id'], self.tenant_baz['id'], role_member['id']
+            new_user['id'], self.project_baz['id'], role_member['id']
         )
-        user_ref = PROVIDERS.identity_api.authenticate(
-            self.make_request(),
-            user_id=new_user['id'],
-            password=user['password'])
+        with self.make_request():
+            user_ref = PROVIDERS.identity_api.authenticate(
+                user_id=new_user['id'],
+                password=user['password'])
         self.assertNotIn('password', user_ref)
         # NOTE(termie): the password field is left in user_sna to make
         #               it easier to authenticate in tests, but should
@@ -94,7 +94,7 @@ class IdentityTests(object):
         user.pop('password')
         self.assertDictContainsSubset(user, user_ref)
         role_list = PROVIDERS.assignment_api.get_roles_for_user_and_project(
-            new_user['id'], self.tenant_baz['id'])
+            new_user['id'], self.project_baz['id'])
         self.assertEqual(1, len(role_list))
         self.assertIn(role_member['id'], role_list)
 
@@ -103,11 +103,11 @@ class IdentityTests(object):
         user = unit.new_user_ref(domain_id=CONF.identity.default_domain_id)
         PROVIDERS.identity_api.create_user(user)
 
-        self.assertRaises(AssertionError,
-                          PROVIDERS.identity_api.authenticate,
-                          self.make_request(),
-                          user_id=id_,
-                          password='password')
+        with self.make_request():
+            self.assertRaises(AssertionError,
+                              PROVIDERS.identity_api.authenticate,
+                              user_id=id_,
+                              password='password')
 
     def test_create_unicode_user_name(self):
         unicode_name = u'name \u540d\u5b57'
@@ -374,19 +374,11 @@ class IdentityTests(object):
                           PROVIDERS.identity_api.delete_user,
                           uuid.uuid4().hex)
 
-    def test_create_user_long_name_fails(self):
-        user = unit.new_user_ref(name='a' * 256,
-                                 domain_id=CONF.identity.default_domain_id)
-        self.assertRaises(exception.ValidationError,
-                          PROVIDERS.identity_api.create_user,
-                          user)
-
-    def test_create_user_blank_name_fails(self):
-        user = unit.new_user_ref(name='',
-                                 domain_id=CONF.identity.default_domain_id)
-        self.assertRaises(exception.ValidationError,
-                          PROVIDERS.identity_api.create_user,
-                          user)
+    def test_create_user_with_long_password(self):
+        user = unit.new_user_ref(domain_id=CONF.identity.default_domain_id,
+                                 password='a' * 2000)
+        # success create a user with long password
+        PROVIDERS.identity_api.create_user(user)
 
     def test_create_user_missed_password(self):
         user = unit.new_user_ref(domain_id=CONF.identity.default_domain_id)
@@ -394,16 +386,15 @@ class IdentityTests(object):
         PROVIDERS.identity_api.get_user(user['id'])
         # Make sure  the user is not allowed to login
         # with a password that  is empty string or None
-        self.assertRaises(AssertionError,
-                          PROVIDERS.identity_api.authenticate,
-                          self.make_request(),
-                          user_id=user['id'],
-                          password='')
-        self.assertRaises(AssertionError,
-                          PROVIDERS.identity_api.authenticate,
-                          self.make_request(),
-                          user_id=user['id'],
-                          password=None)
+        with self.make_request():
+            self.assertRaises(AssertionError,
+                              PROVIDERS.identity_api.authenticate,
+                              user_id=user['id'],
+                              password='')
+            self.assertRaises(AssertionError,
+                              PROVIDERS.identity_api.authenticate,
+                              user_id=user['id'],
+                              password=None)
 
     def test_create_user_none_password(self):
         user = unit.new_user_ref(password=None,
@@ -412,46 +403,15 @@ class IdentityTests(object):
         PROVIDERS.identity_api.get_user(user['id'])
         # Make sure  the user is not allowed to login
         # with a password that  is empty string or None
-        self.assertRaises(AssertionError,
-                          PROVIDERS.identity_api.authenticate,
-                          self.make_request(),
-                          user_id=user['id'],
-                          password='')
-        self.assertRaises(AssertionError,
-                          PROVIDERS.identity_api.authenticate,
-                          self.make_request(),
-                          user_id=user['id'],
-                          password=None)
-
-    def test_create_user_invalid_name_fails(self):
-        user = unit.new_user_ref(name=None,
-                                 domain_id=CONF.identity.default_domain_id)
-        self.assertRaises(exception.ValidationError,
-                          PROVIDERS.identity_api.create_user,
-                          user)
-
-        user = unit.new_user_ref(name=123,
-                                 domain_id=CONF.identity.default_domain_id)
-        self.assertRaises(exception.ValidationError,
-                          PROVIDERS.identity_api.create_user,
-                          user)
-
-    def test_create_user_invalid_enabled_type_string(self):
-        user = unit.new_user_ref(domain_id=CONF.identity.default_domain_id,
-                                 # invalid string value
-                                 enabled='true')
-        self.assertRaises(exception.ValidationError,
-                          PROVIDERS.identity_api.create_user,
-                          user)
-
-    def test_update_user_long_name_fails(self):
-        user = unit.new_user_ref(domain_id=CONF.identity.default_domain_id)
-        user = PROVIDERS.identity_api.create_user(user)
-        user['name'] = 'a' * 256
-        self.assertRaises(exception.ValidationError,
-                          PROVIDERS.identity_api.update_user,
-                          user['id'],
-                          user)
+        with self.make_request():
+            self.assertRaises(AssertionError,
+                              PROVIDERS.identity_api.authenticate,
+                              user_id=user['id'],
+                              password='')
+            self.assertRaises(AssertionError,
+                              PROVIDERS.identity_api.authenticate,
+                              user_id=user['id'],
+                              password=None)
 
     def test_list_users(self):
         users = PROVIDERS.identity_api.list_users(
@@ -472,7 +432,26 @@ class IdentityTests(object):
                              comparator='equals')
         return hints
 
+    def _build_fed_resource(self):
+        # create one test mapping, two idps and two protocols for federation
+        # test.
+        new_mapping = unit.new_mapping_ref()
+        PROVIDERS.federation_api.create_mapping(new_mapping['id'], new_mapping)
+        for idp_id, protocol_id in [('ORG_IDP', 'saml2'),
+                                    ('myidp', 'mapped')]:
+            new_idp = unit.new_identity_provider_ref(idp_id=idp_id,
+                                                     domain_id='default')
+            new_protocol = unit.new_protocol_ref(protocol_id=protocol_id,
+                                                 idp_id=idp_id,
+                                                 mapping_id=new_mapping['id'])
+
+            PROVIDERS.federation_api.create_idp(new_idp['id'], new_idp)
+            PROVIDERS.federation_api.create_protocol(new_idp['id'],
+                                                     new_protocol['id'],
+                                                     new_protocol)
+
     def _test_list_users_with_attribute(self, filters, fed_dict):
+        self._build_fed_resource()
         domain = self._get_domain_fixture()
         # Call list_users while no match exists for the federated user
         hints = driver_hints.Hints()
@@ -556,24 +535,29 @@ class IdentityTests(object):
         self._test_list_users_with_attribute(filters, federated_dict)
 
     def test_list_users_with_name(self):
-        federated_dict = unit.new_federated_user_ref(
-            display_name='test@federation.org')
+        self._build_fed_resource()
+        federated_dict_1 = unit.new_federated_user_ref(
+            display_name='test1@federation.org')
+        federated_dict_2 = unit.new_federated_user_ref(
+            display_name='test2@federation.org')
         domain = self._get_domain_fixture()
 
         hints = driver_hints.Hints()
-        hints.add_filter('name', 'test@federation.org')
+        hints.add_filter('name', 'test1@federation.org')
         users = self.identity_api.list_users(hints=hints)
         self.assertEqual(0, len(users))
 
         self.shadow_users_api.create_federated_user(domain['id'],
-                                                    federated_dict)
+                                                    federated_dict_1)
+        self.shadow_users_api.create_federated_user(domain['id'],
+                                                    federated_dict_2)
         hints = driver_hints.Hints()
-        hints.add_filter('name', 'test@federation.org')
+        hints.add_filter('name', 'test1@federation.org')
         users = self.identity_api.list_users(hints=hints)
         self.assertEqual(1, len(users))
 
         hints = driver_hints.Hints()
-        hints.add_filter('name', 'test@federation.org')
+        hints.add_filter('name', 'test1@federation.org')
         hints.add_filter('idp_id', 'ORG_IDP')
         users = self.identity_api.list_users(hints=hints)
         self.assertEqual(1, len(users))
@@ -625,21 +609,6 @@ class IdentityTests(object):
         PROVIDERS.identity_api.update_user(user['id'], user)
         user_ref = PROVIDERS.identity_api.get_user(user['id'])
         self.assertTrue(user_ref['enabled'])
-
-        # Integers are valid Python's booleans. Explicitly test it.
-        user['enabled'] = 0
-        PROVIDERS.identity_api.update_user(user['id'], user)
-        user_ref = PROVIDERS.identity_api.get_user(user['id'])
-        self.assertFalse(user_ref['enabled'])
-
-        # Any integers other than 0 are interpreted as True
-        user['enabled'] = -42
-        PROVIDERS.identity_api.update_user(user['id'], user)
-        user_ref = PROVIDERS.identity_api.get_user(user['id'])
-        # NOTE(breton): below, attribute `enabled` is explicitly tested to be
-        # equal True. assertTrue should not be used, because it converts
-        # the passed value to bool().
-        self.assertIs(True, user_ref['enabled'])
 
     def test_update_user_name(self):
         user = unit.new_user_ref(domain_id=CONF.identity.default_domain_id)
@@ -1104,6 +1073,30 @@ class IdentityTests(object):
                         matchers.StartsWith('domaingroup1'))
         self.assertThat(entities[1]['name'],
                         matchers.StartsWith('domaingroup1'))
+
+    @unit.skip_if_no_multiple_domains_support
+    def test_list_limit_for_domains(self):
+        def create_domains(count):
+            for _ in range(count):
+                domain = unit.new_domain_ref()
+                self.domain_list.append(
+                    PROVIDERS.resource_api.create_domain(domain['id'], domain))
+
+        def clean_up_domains():
+            for domain in self.domain_list:
+                PROVIDERS.resource_api.update_domain(
+                    domain['id'], {'enabled': False})
+                PROVIDERS.resource_api.delete_domain(domain['id'])
+
+        self.domain_list = []
+        create_domains(6)
+        self.addCleanup(clean_up_domains)
+
+        for x in range(1, 7):
+            self.config_fixture.config(group='resource', list_limit=x)
+            hints = driver_hints.Hints()
+            entities = PROVIDERS.resource_api.list_domains(hints=hints)
+            self.assertThat(entities, matchers.HasLength(hints.limit['limit']))
 
 
 class FilterTests(filtering.FilterTests):

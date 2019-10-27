@@ -39,7 +39,9 @@ class IdentityTestFilteredCase(filtering.FilterTests,
     """Test filter enforcement on the v3 Identity API."""
 
     def _policy_fixture(self):
-        return ksfixtures.Policy(self.tmpfilename, self.config_fixture)
+        return ksfixtures.Policy(
+            self.config_fixture, policy_file=self.tmpfilename
+        )
 
     def setUp(self):
         """Setup for Identity Filter Test Cases."""
@@ -47,7 +49,7 @@ class IdentityTestFilteredCase(filtering.FilterTests,
         self.tmpfilename = self.tempfile.file_name
         super(IdentityTestFilteredCase, self).setUp()
 
-    def load_sample_data(self, enable_sqlite_foreign_key=False):
+    def load_sample_data(self):
         """Create sample data for these tests.
 
         As well as the usual housekeeping, create a set of domains,
@@ -341,7 +343,7 @@ class IdentityPasswordExpiryFilteredTestCase(filtering.FilterTests,
         self.config_fixture = self.useFixture(config_fixture.Config(CONF))
         super(IdentityPasswordExpiryFilteredTestCase, self).setUp()
 
-    def load_sample_data(self, enable_sqlite_foreign_key=False):
+    def load_sample_data(self):
         """Create sample data for password expiry tests.
 
         The test environment will consist of a single domain, containing
@@ -834,7 +836,7 @@ class IdentityTestListLimitCase(IdentityTestFilteredCase):
         self._set_policy({"identity:list_services": []})
         r = self.get('/services', auth=self.auth)
         self.assertEqual(10, len(r.result.get('services')))
-        self.assertIsNone(r.result.get('truncated'))
+        self.assertNotIn('truncated', r.result)
 
     def test_at_limit(self):
         """Check truncated attribute not set when list at max size."""
@@ -846,4 +848,4 @@ class IdentityTestListLimitCase(IdentityTestFilteredCase):
         self.config_fixture.config(group='catalog', list_limit=10)
         r = self.get('/services', auth=self.auth)
         self.assertEqual(10, len(r.result.get('services')))
-        self.assertIsNone(r.result.get('truncated'))
+        self.assertNotIn('truncated', r.result)

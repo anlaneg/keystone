@@ -12,21 +12,26 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+import copy
+import datetime
 import logging
 import os
 import uuid
 
 import argparse
 import fixtures
+import freezegun
 import mock
 import oslo_config.fixture
 from oslo_db.sqlalchemy import migration
 from oslo_log import log
+from oslo_serialization import jsonutils
+from oslo_upgradecheck import upgradecheck
 from six.moves import configparser
+from six.moves import http_client
 from six.moves import range
 from testtools import matchers
 
-from keystone.auth import controllers
 from keystone.cmd import cli
 from keystone.cmd.doctor import caching
 from keystone.cmd.doctor import credential
@@ -37,6 +42,7 @@ from keystone.cmd.doctor import ldap
 from keystone.cmd.doctor import security_compliance
 from keystone.cmd.doctor import tokens
 from keystone.cmd.doctor import tokens_fernet
+from keystone.cmd import status
 from keystone.common import provider_api
 from keystone.common.sql import upgrades
 import keystone.conf
@@ -47,20 +53,25 @@ from keystone.tests import unit
 from keystone.tests.unit import default_fixtures
 from keystone.tests.unit.ksfixtures import database
 from keystone.tests.unit.ksfixtures import ldapdb
+from keystone.tests.unit.ksfixtures import policy
+from keystone.tests.unit.ksfixtures import temporaryfile
+from keystone.tests.unit import mapping_fixtures
 
 
 CONF = keystone.conf.CONF
 PROVIDERS = provider_api.ProviderAPIs
 
 
-class CliNoConfigTestCase(unit.BaseTestCase):
+class CliLoggingTestCase(unit.BaseTestCase):
 
     def setUp(self):
         self.config_fixture = self.useFixture(oslo_config.fixture.Config(CONF))
         self.config_fixture.register_cli_opt(cli.command_opt)
         self.useFixture(fixtures.MockPatch(
             'oslo_config.cfg.find_config_files', return_value=[]))
-        super(CliNoConfigTestCase, self).setUp()
+        fd = self.useFixture(temporaryfile.SecureTempFile())
+        self.fake_config_file = fd.file_name
+        super(CliLoggingTestCase, self).setUp()
 
         # NOTE(crinkle): the command call doesn't have to actually work,
         # that's what the other unit tests are for. So just mock it out.
@@ -72,10 +83,18 @@ class CliNoConfigTestCase(unit.BaseTestCase):
 
         self.logging = self.useFixture(fixtures.FakeLogger(level=log.WARN))
 
-    def test_cli(self):
+    def test_absent_config_logs_warning(self):
         expected_msg = 'Config file not found, using default configs.'
         cli.main(argv=['keystone-manage', 'db_sync'])
         self.assertThat(self.logging.output, matchers.Contains(expected_msg))
+
+    def test_present_config_does_not_log_warning(self):
+        fake_argv = [
+            'keystone-manage', '--config-file', self.fake_config_file, 'doctor'
+        ]
+        cli.main(argv=fake_argv)
+        expected_msg = 'Config file not found, using default configs.'
+        self.assertNotIn(expected_msg, self.logging.output)
 
 
 class CliBootStrapTestCase(unit.SQLDriverOverrides, unit.TestCase):
@@ -83,6 +102,7 @@ class CliBootStrapTestCase(unit.SQLDriverOverrides, unit.TestCase):
     def setUp(self):
         self.useFixture(database.Database())
         super(CliBootStrapTestCase, self).setUp()
+        self.bootstrap = cli.BootStrap()
 
     def config_files(self):
         self.config_fixture.register_cli_opt(cli.command_opt)
@@ -96,44 +116,54 @@ class CliBootStrapTestCase(unit.SQLDriverOverrides, unit.TestCase):
              default_config_files=config_files)
 
     def test_bootstrap(self):
-        bootstrap = cli.BootStrap()
-        self._do_test_bootstrap(bootstrap)
+        self._do_test_bootstrap(self.bootstrap)
 
     def _do_test_bootstrap(self, bootstrap):
+        try:
+            PROVIDERS.resource_api.create_domain(
+                default_fixtures.ROOT_DOMAIN['id'],
+                default_fixtures.ROOT_DOMAIN)
+        except exception.Conflict:
+            pass
+
         bootstrap.do_bootstrap()
-        project = bootstrap.resource_manager.get_project_by_name(
+        project = PROVIDERS.resource_api.get_project_by_name(
             bootstrap.project_name,
             'default')
-        user = bootstrap.identity_manager.get_user_by_name(
+        user = PROVIDERS.identity_api.get_user_by_name(
             bootstrap.username,
             'default')
-        role = bootstrap.role_manager.get_role(bootstrap.role_id)
+        admin_role = PROVIDERS.role_api.get_role(bootstrap.role_id)
+        reader_role = PROVIDERS.role_api.get_role(bootstrap.reader_role_id)
+        member_role = PROVIDERS.role_api.get_role(bootstrap.member_role_id)
         role_list = (
-            bootstrap.assignment_manager.get_roles_for_user_and_project(
+            PROVIDERS.assignment_api.get_roles_for_user_and_project(
                 user['id'],
                 project['id']))
-        self.assertIs(1, len(role_list))
-        self.assertEqual(role_list[0], role['id'])
+        self.assertIs(3, len(role_list))
+        self.assertIn(admin_role['id'], role_list)
+        self.assertIn(reader_role['id'], role_list)
+        self.assertIn(member_role['id'], role_list)
         system_roles = (
-            bootstrap.assignment_manager.list_system_grants_for_user(
+            PROVIDERS.assignment_api.list_system_grants_for_user(
                 user['id']
             )
         )
         self.assertIs(1, len(system_roles))
-        self.assertEqual(system_roles[0]['id'], role['id'])
+        self.assertEqual(system_roles[0]['id'], admin_role['id'])
         # NOTE(morganfainberg): Pass an empty context, it isn't used by
         # `authenticate` method.
-        bootstrap.identity_manager.authenticate(
-            self.make_request(),
-            user['id'],
-            bootstrap.password)
+        with self.make_request():
+            PROVIDERS.identity_api.authenticate(
+                user['id'],
+                bootstrap.password)
 
         if bootstrap.region_id:
-            region = bootstrap.catalog_manager.get_region(bootstrap.region_id)
+            region = PROVIDERS.catalog_api.get_region(bootstrap.region_id)
             self.assertEqual(self.region_id, region['id'])
 
         if bootstrap.service_id:
-            svc = bootstrap.catalog_manager.get_service(bootstrap.service_id)
+            svc = PROVIDERS.catalog_api.get_service(bootstrap.service_id)
             self.assertEqual(self.service_name, svc['name'])
 
             self.assertEqual(set(['admin', 'public', 'internal']),
@@ -145,7 +175,7 @@ class CliBootStrapTestCase(unit.SQLDriverOverrides, unit.TestCase):
 
             for interface, url in urls.items():
                 endpoint_id = bootstrap.endpoints[interface]
-                endpoint = bootstrap.catalog_manager.get_endpoint(endpoint_id)
+                endpoint = PROVIDERS.catalog_api.get_endpoint(endpoint_id)
 
                 self.assertEqual(self.region_id, endpoint['region_id'])
                 self.assertEqual(url, endpoint['url'])
@@ -155,93 +185,135 @@ class CliBootStrapTestCase(unit.SQLDriverOverrides, unit.TestCase):
     def test_bootstrap_is_idempotent_when_password_does_not_change(self):
         # NOTE(morganfainberg): Ensure we can run bootstrap with the same
         # configuration multiple times without erroring.
-        bootstrap = cli.BootStrap()
-        self._do_test_bootstrap(bootstrap)
-        v3_token_controller = controllers.Auth()
+        self._do_test_bootstrap(self.bootstrap)
+        app = self.loadapp()
         v3_password_data = {
-            'identity': {
-                "methods": ["password"],
-                "password": {
-                    "user": {
-                        "name": bootstrap.username,
-                        "password": bootstrap.password,
-                        "domain": {
-                            "id": CONF.identity.default_domain_id
+            'auth': {
+                'identity': {
+                    "methods": ["password"],
+                    "password": {
+                        "user": {
+                            "name": self.bootstrap.username,
+                            "password": self.bootstrap.password,
+                            "domain": {
+                                "id": CONF.identity.default_domain_id
+                            }
                         }
                     }
                 }
             }
         }
-        auth_response = v3_token_controller.authenticate_for_token(
-            self.make_request(), v3_password_data)
-        token = auth_response.headers['X-Subject-Token']
-        self._do_test_bootstrap(bootstrap)
+        with app.test_client() as c:
+            auth_response = c.post('/v3/auth/tokens',
+                                   json=v3_password_data)
+            token = auth_response.headers['X-Subject-Token']
+        self._do_test_bootstrap(self.bootstrap)
         # build validation request
-        request = self.make_request(is_admin=True)
-        request.context_dict['subject_token_id'] = token
-        # Make sure the token we authenticate for is still valid.
-        v3_token_controller.validate_token(request)
+        with app.test_client() as c:
+            # Get a new X-Auth-Token
+            r = c.post(
+                '/v3/auth/tokens',
+                json=v3_password_data)
+
+            # Validate the old token with our new X-Auth-Token.
+            c.get('/v3/auth/tokens',
+                  headers={'X-Auth-Token': r.headers['X-Subject-Token'],
+                           'X-Subject-Token': token})
+        admin_role = PROVIDERS.role_api.get_role(self.bootstrap.role_id)
+        reader_role = PROVIDERS.role_api.get_role(
+            self.bootstrap.reader_role_id)
+        member_role = PROVIDERS.role_api.get_role(
+            self.bootstrap.member_role_id)
+        self.assertEqual(admin_role['options'], {})
+        self.assertEqual(member_role['options'], {})
+        self.assertEqual(reader_role['options'], {})
 
     def test_bootstrap_is_not_idempotent_when_password_does_change(self):
         # NOTE(lbragstad): Ensure bootstrap isn't idempotent when run with
         # different arguments or configuration values.
-        bootstrap = cli.BootStrap()
-        self._do_test_bootstrap(bootstrap)
-        v3_token_controller = controllers.Auth()
+        self._do_test_bootstrap(self.bootstrap)
+        app = self.loadapp()
         v3_password_data = {
-            'identity': {
-                "methods": ["password"],
-                "password": {
-                    "user": {
-                        "name": bootstrap.username,
-                        "password": bootstrap.password,
-                        "domain": {
-                            "id": CONF.identity.default_domain_id
+            'auth': {
+                'identity': {
+                    "methods": ["password"],
+                    "password": {
+                        "user": {
+                            "name": self.bootstrap.username,
+                            "password": self.bootstrap.password,
+                            "domain": {
+                                "id": CONF.identity.default_domain_id
+                            }
                         }
                     }
                 }
             }
         }
-        auth_response = v3_token_controller.authenticate_for_token(
-            self.make_request(), v3_password_data)
-        token = auth_response.headers['X-Subject-Token']
-        os.environ['OS_BOOTSTRAP_PASSWORD'] = uuid.uuid4().hex
-        self._do_test_bootstrap(bootstrap)
-        # build validation request
-        request = self.make_request(is_admin=True)
-        request.context_dict['subject_token_id'] = token
-        # Since the user account was recovered with a different password, we
-        # shouldn't be able to validate this token. Bootstrap should have
-        # persisted a revocation event because the user's password was updated.
-        # Since this token was obtained using the original password, it should
-        # now be invalid.
-        self.assertRaises(
-            exception.TokenNotFound,
-            v3_token_controller.validate_token,
-            request
-        )
+        time = datetime.datetime.utcnow()
+        with freezegun.freeze_time(time) as frozen_time:
+            with app.test_client() as c:
+                auth_response = c.post('/v3/auth/tokens',
+                                       json=v3_password_data)
+                token = auth_response.headers['X-Subject-Token']
+            new_passwd = uuid.uuid4().hex
+            os.environ['OS_BOOTSTRAP_PASSWORD'] = new_passwd
+            self._do_test_bootstrap(self.bootstrap)
+            v3_password_data['auth']['identity']['password']['user'][
+                'password'] = new_passwd
+            # Move time forward a second to avoid rev. event capturing the new
+            # auth-token since we're within a single second (possibly) for the
+            # test case.
+            frozen_time.tick(delta=datetime.timedelta(seconds=1))
+            # Validate the old token
+            with app.test_client() as c:
+                # Get a new X-Auth-Token
+                r = c.post('/v3/auth/tokens', json=v3_password_data)
+                # Since the user account was recovered with a different
+                # password, we shouldn't be able to validate this token.
+                # Bootstrap should have persisted a revocation event because
+                # the user's password was updated. Since this token was
+                # obtained using the original password, it should now be
+                # invalid.
+                c.get('/v3/auth/tokens',
+                      headers={'X-Auth-Token': r.headers['X-Subject-Token'],
+                               'X-Subject-Token': token},
+                      expected_status_code=http_client.NOT_FOUND)
 
     def test_bootstrap_recovers_user(self):
-        bootstrap = cli.BootStrap()
-        self._do_test_bootstrap(bootstrap)
+        self._do_test_bootstrap(self.bootstrap)
 
         # Completely lock the user out.
-        user_id = bootstrap.identity_manager.get_user_by_name(
-            bootstrap.username,
+        user_id = PROVIDERS.identity_api.get_user_by_name(
+            self.bootstrap.username,
             'default')['id']
-        bootstrap.identity_manager.update_user(
+        PROVIDERS.identity_api.update_user(
             user_id,
             {'enabled': False,
              'password': uuid.uuid4().hex})
 
         # The second bootstrap run will recover the account.
-        self._do_test_bootstrap(bootstrap)
+        self._do_test_bootstrap(self.bootstrap)
 
         # Sanity check that the original password works again.
-        bootstrap.identity_manager.authenticate(
-            self.make_request(),
-            user_id,
-            bootstrap.password)
+        with self.make_request():
+            PROVIDERS.identity_api.authenticate(
+                user_id,
+                self.bootstrap.password)
+
+    def test_bootstrap_with_immutable_roles(self):
+        CONF(args=['bootstrap',
+                   '--bootstrap-password', uuid.uuid4().hex,
+                   '--immutable-roles'],
+             project='keystone')
+        self._do_test_bootstrap(self.bootstrap)
+        admin_role = PROVIDERS.role_api.get_role(self.bootstrap.role_id)
+        reader_role = PROVIDERS.role_api.get_role(
+            self.bootstrap.reader_role_id)
+        member_role = PROVIDERS.role_api.get_role(
+            self.bootstrap.member_role_id)
+        self.assertTrue(admin_role['options']['immutable'])
+        self.assertTrue(member_role['options']['immutable'])
+        self.assertTrue(reader_role['options']['immutable'])
 
 
 class CliBootStrapTestCaseWithEnvironment(CliBootStrapTestCase):
@@ -293,73 +365,85 @@ class CliBootStrapTestCaseWithEnvironment(CliBootStrapTestCase):
             fixtures.EnvironmentVariable('OS_BOOTSTRAP_REGION_ID',
                                          newvalue=self.region_id))
 
+        PROVIDERS.resource_api.create_domain(
+            default_fixtures.ROOT_DOMAIN['id'], default_fixtures.ROOT_DOMAIN)
+
     def test_assignment_created_with_user_exists(self):
         # test assignment can be created if user already exists.
-        bootstrap = cli.BootStrap()
-        bootstrap.resource_manager.create_domain(self.default_domain['id'],
-                                                 self.default_domain)
+        PROVIDERS.resource_api.create_domain(self.default_domain['id'],
+                                             self.default_domain)
         user_ref = unit.new_user_ref(self.default_domain['id'],
                                      name=self.username,
                                      password=self.password)
-        bootstrap.identity_manager.create_user(user_ref)
-        self._do_test_bootstrap(bootstrap)
+        PROVIDERS.identity_api.create_user(user_ref)
+
+        self._do_test_bootstrap(self.bootstrap)
 
     def test_assignment_created_with_project_exists(self):
         # test assignment can be created if project already exists.
-        bootstrap = cli.BootStrap()
-        bootstrap.resource_manager.create_domain(self.default_domain['id'],
-                                                 self.default_domain)
+        PROVIDERS.resource_api.create_domain(self.default_domain['id'],
+                                             self.default_domain)
         project_ref = unit.new_project_ref(self.default_domain['id'],
                                            name=self.project_name)
-        bootstrap.resource_manager.create_project(project_ref['id'],
-                                                  project_ref)
-        self._do_test_bootstrap(bootstrap)
+        PROVIDERS.resource_api.create_project(project_ref['id'], project_ref)
+        self._do_test_bootstrap(self.bootstrap)
 
     def test_assignment_created_with_role_exists(self):
         # test assignment can be created if role already exists.
-        bootstrap = cli.BootStrap()
-        bootstrap.resource_manager.create_domain(self.default_domain['id'],
-                                                 self.default_domain)
+        PROVIDERS.resource_api.create_domain(self.default_domain['id'],
+                                             self.default_domain)
         role = unit.new_role_ref(name=self.role_name)
-        bootstrap.role_manager.create_role(role['id'], role)
-        self._do_test_bootstrap(bootstrap)
+        PROVIDERS.role_api.create_role(role['id'], role)
+        self._do_test_bootstrap(self.bootstrap)
 
     def test_assignment_created_with_region_exists(self):
         # test assignment can be created if region already exists.
-        bootstrap = cli.BootStrap()
-        bootstrap.resource_manager.create_domain(self.default_domain['id'],
-                                                 self.default_domain)
+        PROVIDERS.resource_api.create_domain(self.default_domain['id'],
+                                             self.default_domain)
         region = unit.new_region_ref(id=self.region_id)
-        bootstrap.catalog_manager.create_region(region)
-        self._do_test_bootstrap(bootstrap)
+        PROVIDERS.catalog_api.create_region(region)
+        self._do_test_bootstrap(self.bootstrap)
 
     def test_endpoints_created_with_service_exists(self):
         # test assignment can be created if service already exists.
-        bootstrap = cli.BootStrap()
-        bootstrap.resource_manager.create_domain(self.default_domain['id'],
-                                                 self.default_domain)
+        PROVIDERS.resource_api.create_domain(self.default_domain['id'],
+                                             self.default_domain)
         service = unit.new_service_ref(name=self.service_name)
-        bootstrap.catalog_manager.create_service(service['id'], service)
-        self._do_test_bootstrap(bootstrap)
+        PROVIDERS.catalog_api.create_service(service['id'], service)
+        self._do_test_bootstrap(self.bootstrap)
 
     def test_endpoints_created_with_endpoint_exists(self):
         # test assignment can be created if endpoint already exists.
-        bootstrap = cli.BootStrap()
-        bootstrap.resource_manager.create_domain(self.default_domain['id'],
-                                                 self.default_domain)
+        PROVIDERS.resource_api.create_domain(self.default_domain['id'],
+                                             self.default_domain)
         service = unit.new_service_ref(name=self.service_name)
-        bootstrap.catalog_manager.create_service(service['id'], service)
+        PROVIDERS.catalog_api.create_service(service['id'], service)
 
         region = unit.new_region_ref(id=self.region_id)
-        bootstrap.catalog_manager.create_region(region)
+        PROVIDERS.catalog_api.create_region(region)
 
         endpoint = unit.new_endpoint_ref(interface='public',
                                          service_id=service['id'],
                                          url=self.public_url,
                                          region_id=self.region_id)
-        bootstrap.catalog_manager.create_endpoint(endpoint['id'], endpoint)
+        PROVIDERS.catalog_api.create_endpoint(endpoint['id'], endpoint)
 
-        self._do_test_bootstrap(bootstrap)
+        self._do_test_bootstrap(self.bootstrap)
+
+    def test_endpoints_created_with_new_endpoints(self):
+        service = unit.new_service_ref(name=self.service_name, type='identity')
+        PROVIDERS.catalog_api.create_service(service['id'], service)
+        region = unit.new_region_ref(id=self.region_id)
+        PROVIDERS.catalog_api.create_region(region)
+        endpoint = unit.new_endpoint_ref(interface='public',
+                                         service_id=service['id'],
+                                         url=uuid.uuid4().hex,
+                                         region_id=self.region_id)
+        PROVIDERS.catalog_api.create_endpoint(endpoint['id'], endpoint)
+
+        self._do_test_bootstrap(self.bootstrap)
+        updated_endpoint = PROVIDERS.catalog_api.get_endpoint(endpoint['id'])
+        self.assertEqual(updated_endpoint['url'], self.bootstrap.public_url)
 
 
 class CliDomainConfigAllTestCase(unit.SQLDriverOverrides, unit.TestCase):
@@ -406,6 +490,9 @@ class CliDomainConfigAllTestCase(unit.SQLDriverOverrides, unit.TestCase):
 
         def create_domain(domain):
             return PROVIDERS.resource_api.create_domain(domain['id'], domain)
+
+        PROVIDERS.resource_api.create_domain(
+            default_fixtures.ROOT_DOMAIN['id'], default_fixtures.ROOT_DOMAIN)
 
         self.domains = {}
         self.addCleanup(self.cleanup_domains)
@@ -841,7 +928,7 @@ class CredentialDoctorTests(unit.TestCase):
     def test_usability_of_cred_fernet_key_repo_raised(self, mock_utils):
         # Symptom Detected: credential fernet key repository is world readable
         self.config_fixture.config(group='credential', provider='fernet')
-        mock_utils.TokenUtils().validate_key_repository.return_value = False
+        mock_utils.FernetUtils().validate_key_repository.return_value = False
         self.assertTrue(
             credential.symptom_usability_of_credential_fernet_key_repository())
 
@@ -849,13 +936,13 @@ class CredentialDoctorTests(unit.TestCase):
     def test_usability_of_cred_fernet_key_repo_not_raised(self, mock_utils):
         # No Symptom Detected: Custom driver is used
         self.config_fixture.config(group='credential', provider='my-driver')
-        mock_utils.TokenUtils().validate_key_repository.return_value = True
+        mock_utils.FernetUtils().validate_key_repository.return_value = True
         self.assertFalse(
             credential.symptom_usability_of_credential_fernet_key_repository())
 
         # No Symptom Detected: key repository is not world readable
         self.config_fixture.config(group='credential', provider='fernet')
-        mock_utils.TokenUtils().validate_key_repository.return_value = True
+        mock_utils.FernetUtils().validate_key_repository.return_value = True
         self.assertFalse(
             credential.symptom_usability_of_credential_fernet_key_repository())
 
@@ -863,7 +950,7 @@ class CredentialDoctorTests(unit.TestCase):
     def test_keys_in_credential_fernet_key_repository_raised(self, mock_utils):
         # Symptom Detected: Key repo is empty
         self.config_fixture.config(group='credential', provider='fernet')
-        mock_utils.TokenUtils().load_keys.return_value = False
+        mock_utils.FernetUtils().load_keys.return_value = False
         self.assertTrue(
             credential.symptom_keys_in_credential_fernet_key_repository())
 
@@ -872,13 +959,13 @@ class CredentialDoctorTests(unit.TestCase):
             self, mock_utils):
         # No Symptom Detected: Custom driver is used
         self.config_fixture.config(group='credential', provider='my-driver')
-        mock_utils.TokenUtils().load_keys.return_value = True
+        mock_utils.FernetUtils().load_keys.return_value = True
         self.assertFalse(
             credential.symptom_keys_in_credential_fernet_key_repository())
 
         # No Symptom Detected: Key repo is not empty, fernet is current driver
         self.config_fixture.config(group='credential', provider='fernet')
-        mock_utils.TokenUtils().load_keys.return_value = True
+        mock_utils.FernetUtils().load_keys.return_value = True
         self.assertFalse(
             credential.symptom_keys_in_credential_fernet_key_repository())
 
@@ -1234,11 +1321,6 @@ class SecurityComplianceDoctorTests(unit.TestCase):
 class TokensDoctorTests(unit.TestCase):
 
     def test_unreasonable_max_token_size_raised(self):
-        # Symptom Detected: the max_token_size for uuid is not 32
-        self.config_fixture.config(group='token', provider='uuid')
-        self.config_fixture.config(max_token_size=33)
-        self.assertTrue(tokens.symptom_unreasonable_max_token_size())
-
         # Symptom Detected: the max_token_size for fernet is greater than 255
         self.config_fixture.config(group='token', provider='fernet')
         self.config_fixture.config(max_token_size=256)
@@ -1262,7 +1344,7 @@ class TokenFernetDoctorTests(unit.TestCase):
     def test_usability_of_Fernet_key_repository_raised(self, mock_utils):
         # Symptom Detected: Fernet key repo is world readable
         self.config_fixture.config(group='token', provider='fernet')
-        mock_utils.TokenUtils().validate_key_repository.return_value = False
+        mock_utils.FernetUtils().validate_key_repository.return_value = False
         self.assertTrue(
             tokens_fernet.symptom_usability_of_Fernet_key_repository())
 
@@ -1270,14 +1352,14 @@ class TokenFernetDoctorTests(unit.TestCase):
     def test_usability_of_Fernet_key_repository_not_raised(self, mock_utils):
         # No Symptom Detected: UUID is used instead of fernet
         self.config_fixture.config(group='token', provider='uuid')
-        mock_utils.TokenUtils().validate_key_repository.return_value = False
+        mock_utils.FernetUtils().validate_key_repository.return_value = False
         self.assertFalse(
             tokens_fernet.symptom_usability_of_Fernet_key_repository())
 
         # No Symptom Detected: configs set properly, key repo is not world
         # readable but is user readable
         self.config_fixture.config(group='token', provider='fernet')
-        mock_utils.TokenUtils().validate_key_repository.return_value = True
+        mock_utils.FernetUtils().validate_key_repository.return_value = True
         self.assertFalse(
             tokens_fernet.symptom_usability_of_Fernet_key_repository())
 
@@ -1285,7 +1367,7 @@ class TokenFernetDoctorTests(unit.TestCase):
     def test_keys_in_Fernet_key_repository_raised(self, mock_utils):
         # Symptom Detected: Fernet key repository is empty
         self.config_fixture.config(group='token', provider='fernet')
-        mock_utils.TokenUtils().load_keys.return_value = False
+        mock_utils.FernetUtils().load_keys.return_value = False
         self.assertTrue(
             tokens_fernet.symptom_keys_in_Fernet_key_repository())
 
@@ -1293,14 +1375,14 @@ class TokenFernetDoctorTests(unit.TestCase):
     def test_keys_in_Fernet_key_repository_not_raised(self, mock_utils):
         # No Symptom Detected: UUID is used instead of fernet
         self.config_fixture.config(group='token', provider='uuid')
-        mock_utils.TokenUtils().load_keys.return_value = True
+        mock_utils.FernetUtils().load_keys.return_value = True
         self.assertFalse(
             tokens_fernet.symptom_usability_of_Fernet_key_repository())
 
         # No Symptom Detected: configs set properly, key repo has been
         # populated with keys
         self.config_fixture.config(group='token', provider='fernet')
-        mock_utils.TokenUtils().load_keys.return_value = True
+        mock_utils.FernetUtils().load_keys.return_value = True
         self.assertFalse(
             tokens_fernet.symptom_usability_of_Fernet_key_repository())
 
@@ -1385,3 +1467,497 @@ class TestMappingPurge(unit.SQLDriverOverrides, unit.BaseTestCase):
         args.append('--public-id')
         args.append(uuid.uuid4().hex)
         self.parser.parse_args(args)
+
+    @mock.patch.object(keystone.identity.MappingManager, 'purge_mappings')
+    def test_mapping_purge_type_user(self, purge_mock):
+        # Make sure the logic in main() actually catches no argument error
+        self.command_type = 'user'
+        self.command_all = False
+        self.command_domain_name = None
+        self.command_local_id = uuid.uuid4().hex
+        self.command_public_id = uuid.uuid4().hex
+        self.useFixture(fixtures.MockPatchObject(
+            CONF, 'command', self.FakeConfCommand(self)))
+
+        def fake_load_backends():
+            return dict(
+                id_mapping_api=keystone.identity.core.MappingManager,
+                resource_api=None)
+
+        self.useFixture(fixtures.MockPatch(
+            'keystone.server.backends.load_backends',
+            side_effect=fake_load_backends))
+
+        cli.MappingPurge.main()
+        purge_mock.assert_called_with({'entity_type': 'user',
+                                       'local_id': self.command_local_id,
+                                       'public_id': self.command_public_id})
+
+
+class TestUserMappingPurgeFunctional(unit.SQLDriverOverrides, unit.TestCase):
+
+    def setUp(self):
+        sqldb = self.useFixture(database.Database())
+        super(TestUserMappingPurgeFunctional, self).setUp()
+        self.ldapdb = self.useFixture(ldapdb.LDAPDatabase())
+        self.ldapdb.clear()
+
+        self.load_backends()
+
+        sqldb.recreate()
+        self.load_fixtures(default_fixtures)
+
+    def config_files(self):
+        self.config_fixture.register_cli_opt(cli.command_opt)
+        config_files = super(
+            TestUserMappingPurgeFunctional, self
+        ).config_files()
+        config_files.append(unit.dirs.tests_conf('backend_ldap_sql.conf'))
+        return config_files
+
+    def config_overrides(self):
+        super(TestUserMappingPurgeFunctional, self).config_overrides()
+        self.config_fixture.config(group='identity', driver='ldap')
+        self.config_fixture.config(group='identity_mapping',
+                                   backward_compatible_ids=False)
+
+    def config(self, config_files):
+        CONF(args=['mapping_purge', '--type', 'user'],
+             project='keystone',
+             default_config_files=config_files)
+
+    def test_purge_by_user_type(self):
+        # Grab the list of the users from the backend directly to avoid
+        # populating the public_ids for each user. We do this so we can grab
+        # the local_id of a user before it's overwritten by the public_id.
+        hints = None
+        users = PROVIDERS.identity_api.driver.list_users(hints)
+
+        # Create a new group in the backend directly. We do this so that we
+        # have control over the local_id, which is `id` here. After creating
+        # the group, let's list them so the id_mapping_api creates the public
+        # id appropriately.
+        group_ref = {
+            'id': uuid.uuid4().hex,
+            'name': uuid.uuid4().hex,
+            'domain_id': CONF.identity.default_domain_id
+        }
+        PROVIDERS.identity_api.driver.create_group(group_ref['id'], group_ref)
+        PROVIDERS.identity_api.list_groups()
+
+        # Make sure all users and groups have public ids by querying the
+        # id_mapping_api.
+        for user in users:
+            local_entity = {
+                'domain_id': CONF.identity.default_domain_id,
+                'local_id': user['id'],
+                'entity_type': identity_mapping.EntityType.USER}
+            self.assertIsNotNone(
+                PROVIDERS.id_mapping_api.get_public_id(local_entity))
+
+        group_entity = {
+            'domain_id': CONF.identity.default_domain_id,
+            'local_id': group_ref['id'],
+            'entity_type': identity_mapping.EntityType.GROUP}
+        self.assertIsNotNone(
+            PROVIDERS.id_mapping_api.get_public_id(group_entity)
+        )
+
+        # Purge all users mappings
+        provider_api.ProviderAPIs._clear_registry_instances()
+        cli.MappingPurge.main()
+
+        # Check that all the user mappings were purged
+        for user in users:
+            local_entity = {
+                'domain_id': CONF.identity.default_domain_id,
+                'local_id': user['id'],
+                'entity_type': identity_mapping.EntityType.USER}
+            self.assertIsNone(
+                PROVIDERS.id_mapping_api.get_public_id(local_entity)
+            )
+
+        # Make sure the group mapping still exists
+        self.assertIsNotNone(
+            PROVIDERS.id_mapping_api.get_public_id(group_entity)
+        )
+
+
+class TestGroupMappingPurgeFunctional(unit.SQLDriverOverrides, unit.TestCase):
+
+    def setUp(self):
+        sqldb = self.useFixture(database.Database())
+        super(TestGroupMappingPurgeFunctional, self).setUp()
+        self.ldapdb = self.useFixture(ldapdb.LDAPDatabase())
+        self.ldapdb.clear()
+
+        self.load_backends()
+
+        sqldb.recreate()
+        self.load_fixtures(default_fixtures)
+
+    def config_files(self):
+        self.config_fixture.register_cli_opt(cli.command_opt)
+        config_files = super(
+            TestGroupMappingPurgeFunctional, self
+        ).config_files()
+        config_files.append(unit.dirs.tests_conf('backend_ldap_sql.conf'))
+        return config_files
+
+    def config_overrides(self):
+        super(TestGroupMappingPurgeFunctional, self).config_overrides()
+        self.config_fixture.config(group='identity', driver='ldap')
+        self.config_fixture.config(group='identity_mapping',
+                                   backward_compatible_ids=False)
+
+    def config(self, config_files):
+        CONF(args=['mapping_purge', '--type', 'group'],
+             project='keystone',
+             default_config_files=config_files)
+
+    def test_purge_by_group_type(self):
+        # Grab the list of the users from the backend directly to avoid
+        # populating the public_ids for each user. We do this so we can grab
+        # the local_id of a user before it's overwritten by the public_id.
+        hints = None
+        users = PROVIDERS.identity_api.driver.list_users(hints)
+
+        # Create a new group in the backend directly. We do this so that we
+        # have control over the local_id, which is `id` here. After creating
+        # the group, let's list them so the id_mapping_api creates the public
+        # id appropriately.
+        group_ref = {
+            'id': uuid.uuid4().hex,
+            'name': uuid.uuid4().hex,
+            'domain_id': CONF.identity.default_domain_id
+        }
+        PROVIDERS.identity_api.driver.create_group(group_ref['id'], group_ref)
+        PROVIDERS.identity_api.list_groups()
+
+        # Make sure all users and groups have public ids by querying the
+        # id_mapping_api.
+        for user in users:
+            local_entity = {
+                'domain_id': CONF.identity.default_domain_id,
+                'local_id': user['id'],
+                'entity_type': identity_mapping.EntityType.USER}
+            self.assertIsNotNone(
+                PROVIDERS.id_mapping_api.get_public_id(local_entity))
+
+        group_entity = {
+            'domain_id': CONF.identity.default_domain_id,
+            'local_id': group_ref['id'],
+            'entity_type': identity_mapping.EntityType.GROUP}
+        self.assertIsNotNone(
+            PROVIDERS.id_mapping_api.get_public_id(group_entity)
+        )
+
+        # Purge group mappings
+        provider_api.ProviderAPIs._clear_registry_instances()
+        cli.MappingPurge.main()
+
+        # Make sure the group mapping was purged
+        self.assertIsNone(
+            PROVIDERS.id_mapping_api.get_public_id(group_entity)
+        )
+
+        # Check that all the user mappings still exist
+        for user in users:
+            local_entity = {
+                'domain_id': CONF.identity.default_domain_id,
+                'local_id': user['id'],
+                'entity_type': identity_mapping.EntityType.USER}
+            self.assertIsNotNone(
+                PROVIDERS.id_mapping_api.get_public_id(local_entity)
+            )
+
+
+class TestTrustFlush(unit.SQLDriverOverrides, unit.BaseTestCase):
+
+    class FakeConfCommand(object):
+        def __init__(self, parent):
+            self.extension = False
+            self.project_id = parent.command_project_id
+            self.trustor_user_id = parent.command_trustor_user_id
+            self.trustee_user_id = parent.command_trustee_user_id
+            self.date = parent.command_date
+
+    def setUp(self):
+        # Set up preset cli options and a parser
+        super(TestTrustFlush, self).setUp()
+        self.useFixture(database.Database())
+        self.config_fixture = self.useFixture(oslo_config.fixture.Config(CONF))
+        self.config_fixture.register_cli_opt(cli.command_opt)
+        # For unit tests that should not throw any errors,
+        # Use the argument parser to test that the combinations work
+        parser_test = argparse.ArgumentParser()
+        subparsers = parser_test.add_subparsers()
+        self.parser = cli.TrustFlush.add_argument_parser(subparsers)
+
+    def config_files(self):
+        config_files = super(TestTrustFlush, self).config_files()
+        config_files.append(unit.dirs.tests_conf('backend_sql.conf'))
+        return config_files
+
+    def test_trust_flush(self):
+        self.command_project_id = None
+        self.command_trustor_user_id = None
+        self.command_trustee_user_id = None
+        self.command_date = datetime.datetime.utcnow()
+        self.useFixture(fixtures.MockPatchObject(
+            CONF, 'command', self.FakeConfCommand(self)))
+
+        def fake_load_backends():
+            return dict(
+                trust_api=keystone.trust.core.Manager())
+
+        self.useFixture(fixtures.MockPatch(
+            'keystone.server.backends.load_backends',
+            side_effect=fake_load_backends))
+        trust = cli.TrustFlush()
+        trust.main()
+
+    def test_trust_flush_with_invalid_date(self):
+        self.command_project_id = None
+        self.command_trustor_user_id = None
+        self.command_trustee_user_id = None
+        self.command_date = '4/10/92'
+        self.useFixture(fixtures.MockPatchObject(
+            CONF, 'command', self.FakeConfCommand(self)))
+
+        def fake_load_backends():
+            return dict(
+                trust_api=keystone.trust.core.Manager())
+
+        self.useFixture(fixtures.MockPatch(
+            'keystone.server.backends.load_backends',
+            side_effect=fake_load_backends))
+        # Clear backend dependencies, since cli loads these manually
+        provider_api.ProviderAPIs._clear_registry_instances()
+        trust = cli.TrustFlush()
+        self.assertRaises(ValueError, trust.main)
+
+
+class TestMappingEngineTester(unit.BaseTestCase):
+
+    class FakeConfCommand(object):
+        def __init__(self, parent):
+            self.extension = False
+            self.rules = parent.command_rules
+            self.input = parent.command_input
+            self.prefix = parent.command_prefix
+            self.engine_debug = parent.command_engine_debug
+
+    def setUp(self):
+        # Set up preset cli options and a parser
+        super(TestMappingEngineTester, self).setUp()
+        self.mapping_id = uuid.uuid4().hex
+        self.rules_pathname = None
+        self.rules = None
+        self.assertion_pathname = None
+        self.assertion = None
+        self.logging = self.useFixture(fixtures.LoggerFixture())
+        self.useFixture(database.Database())
+        self.config_fixture = self.useFixture(oslo_config.fixture.Config(CONF))
+        self.config_fixture.register_cli_opt(cli.command_opt)
+        # For unit tests that should not throw any erorrs,
+        # Use the argument parser to test that the combinations work
+        parser_test = argparse.ArgumentParser()
+        subparsers = parser_test.add_subparsers()
+        self.parser = cli.MappingEngineTester.add_argument_parser(subparsers)
+
+    def config_files(self):
+        config_files = super(TestMappingEngineTester, self).config_files()
+        config_files.append(unit.dirs.tests_conf('backend_sql.conf'))
+        return config_files
+
+    def test_mapping_engine_tester_with_invalid_rules_file(self):
+        tempfilejson = self.useFixture(temporaryfile.SecureTempFile())
+        tmpinvalidfile = tempfilejson.file_name
+        # Here the data required for rules should be in JSON format
+        # whereas the file contains text.
+        with open(tmpinvalidfile, 'w') as f:
+            f.write("This is an invalid data")
+        self.command_rules = tmpinvalidfile
+        self.command_input = tmpinvalidfile
+        self.command_prefix = None
+        self.command_engine_debug = True
+        self.useFixture(fixtures.MockPatchObject(
+            CONF, 'command', self.FakeConfCommand(self)))
+        mapping_engine = cli.MappingEngineTester()
+        self.assertRaises(SystemExit, mapping_engine.main)
+
+    def test_mapping_engine_tester_with_invalid_input_file(self):
+        tempfilejson = self.useFixture(temporaryfile.SecureTempFile())
+        tmpfilejsonname = tempfilejson.file_name
+        updated_mapping = copy.deepcopy(mapping_fixtures.MAPPING_SMALL)
+        with open(tmpfilejsonname, 'w') as f:
+            f.write(jsonutils.dumps(updated_mapping))
+        self.command_rules = tmpfilejsonname
+        # Here invalid.csv does not exist
+        self.command_input = "invalid.csv"
+        self.command_prefix = None
+        self.command_engine_debug = True
+        self.useFixture(fixtures.MockPatchObject(
+            CONF, 'command', self.FakeConfCommand(self)))
+        mapping_engine = cli.MappingEngineTester()
+        self.assertRaises(SystemExit, mapping_engine.main)
+
+    def test_mapping_engine_tester(self):
+        tempfilejson = self.useFixture(temporaryfile.SecureTempFile())
+        tmpfilejsonname = tempfilejson.file_name
+        updated_mapping = copy.deepcopy(mapping_fixtures.MAPPING_SMALL)
+        with open(tmpfilejsonname, 'w') as f:
+            f.write(jsonutils.dumps(updated_mapping))
+        self.command_rules = tmpfilejsonname
+        tempfile = self.useFixture(temporaryfile.SecureTempFile())
+        tmpfilename = tempfile.file_name
+        with open(tmpfilename, 'w') as f:
+            f.write("\n")
+            f.write("UserName:me\n")
+            f.write("orgPersonType:NoContractor\n")
+            f.write("LastName:Bo\n")
+            f.write("FirstName:Jill\n")
+        self.command_input = tmpfilename
+        self.command_prefix = None
+        self.command_engine_debug = True
+        self.useFixture(fixtures.MockPatchObject(
+            CONF, 'command', self.FakeConfCommand(self)))
+        mapping_engine = cli.MappingEngineTester()
+        with mock.patch('six.moves.builtins.print') as mock_print:
+            mapping_engine.main()
+            self.assertEqual(mock_print.call_count, 3)
+            call = mock_print.call_args_list[0]
+            args, kwargs = call
+            self.assertTrue(args[0].startswith('Using Rules:'))
+            call = mock_print.call_args_list[1]
+            args, kwargs = call
+            self.assertTrue(args[0].startswith('Using Assertion:'))
+            call = mock_print.call_args_list[2]
+            args, kwargs = call
+            expected = {
+                "group_names": [],
+                "user": {
+                    "type": "ephemeral",
+                    "name": "me"
+                },
+                "projects": [],
+                "group_ids": ["0cd5e9"]
+            }
+            self.assertEqual(jsonutils.loads(args[0]), expected)
+
+    def test_mapping_engine_tester_with_invalid_data(self):
+        tempfilejson = self.useFixture(temporaryfile.SecureTempFile())
+        tmpfilejsonname = tempfilejson.file_name
+        updated_mapping = copy.deepcopy(mapping_fixtures.MAPPING_SMALL)
+        with open(tmpfilejsonname, 'w') as f:
+            f.write(jsonutils.dumps(updated_mapping))
+        self.command_rules = tmpfilejsonname
+        tempfile = self.useFixture(temporaryfile.SecureTempFile())
+        tmpfilename = tempfile.file_name
+        # Here we do not have any value matching to type 'Email'
+        # and condition in mapping_engine_test_rules.json
+        with open(tmpfilename, 'w') as f:
+            f.write("\n")
+            f.write("UserName: me\n")
+            f.write("Email: No@example.com\n")
+        self.command_input = tmpfilename
+        self.command_prefix = None
+        self.command_engine_debug = True
+        self.useFixture(fixtures.MockPatchObject(
+            CONF, 'command', self.FakeConfCommand(self)))
+        mapping_engine = cli.MappingEngineTester()
+        self.assertRaises(exception.ValidationError,
+                          mapping_engine.main)
+
+    def test_mapping_engine_tester_logs_direct_maps(self):
+        tempfilejson = self.useFixture(temporaryfile.SecureTempFile())
+        tmpfilejsonname = tempfilejson.file_name
+        updated_mapping = copy.deepcopy(mapping_fixtures.MAPPING_SMALL)
+        with open(tmpfilejsonname, 'w') as f:
+            f.write(jsonutils.dumps(updated_mapping))
+        self.command_rules = tmpfilejsonname
+        tempfile = self.useFixture(temporaryfile.SecureTempFile())
+        tmpfilename = tempfile.file_name
+        with open(tmpfilename, 'w') as f:
+            f.write("\n")
+            f.write("UserName:me\n")
+            f.write("orgPersonType:NoContractor\n")
+            f.write("LastName:Bo\n")
+            f.write("FirstName:Jill\n")
+        self.command_input = tmpfilename
+        self.command_prefix = None
+        self.command_engine_debug = True
+        self.useFixture(fixtures.MockPatchObject(
+            CONF, 'command', self.FakeConfCommand(self)))
+        mapping_engine = cli.MappingEngineTester()
+        logging = self.useFixture(fixtures.FakeLogger(level=log.DEBUG))
+        mapping_engine.main()
+        expected_msg = "direct_maps: [['me']]"
+        self.assertThat(logging.output, matchers.Contains(expected_msg))
+
+
+class CliStatusTestCase(unit.SQLDriverOverrides, unit.TestCase):
+
+    def setUp(self):
+        self.useFixture(database.Database())
+        super(CliStatusTestCase, self).setUp()
+        self.load_backends()
+        self.policy_file = self.useFixture(temporaryfile.SecureTempFile())
+        self.policy_file_name = self.policy_file.file_name
+        self.useFixture(
+            policy.Policy(
+                self.config_fixture, policy_file=self.policy_file_name
+            )
+        )
+        self.checks = status.Checks()
+
+    def test_check_safe_trust_policies(self):
+        with open(self.policy_file_name, 'w') as f:
+            overridden_policies = {
+                'identity:list_trusts': '',
+                'identity:delete_trust': '',
+                'identity:get_trust': '',
+                'identity:list_roles_for_trust': '',
+                'identity:get_role_for_trust': ''
+            }
+            f.write(jsonutils.dumps(overridden_policies))
+        result = self.checks.check_trust_policies_are_not_empty()
+        self.assertEqual(upgradecheck.Code.FAILURE, result.code)
+        with open(self.policy_file_name, 'w') as f:
+            overridden_policies = {
+                'identity:list_trusts': 'rule:admin_required',
+                'identity:delete_trust': 'rule:admin_required',
+                'identity:get_trust': 'rule:admin_required',
+                'identity:list_roles_for_trust': 'rule:admin_required',
+                'identity:get_role_for_trust': 'rule:admin_required'
+            }
+            f.write(jsonutils.dumps(overridden_policies))
+        result = self.checks.check_trust_policies_are_not_empty()
+        self.assertEqual(upgradecheck.Code.SUCCESS, result.code)
+        with open(self.policy_file_name, 'w') as f:
+            overridden_policies = {}
+            f.write(jsonutils.dumps(overridden_policies))
+        result = self.checks.check_trust_policies_are_not_empty()
+        self.assertEqual(upgradecheck.Code.SUCCESS, result.code)
+
+    def test_check_immutable_roles(self):
+        role_ref = unit.new_role_ref(name='admin')
+        PROVIDERS.role_api.create_role(role_ref['id'], role_ref)
+        result = self.checks.check_default_roles_are_immutable()
+        self.assertEqual(upgradecheck.Code.FAILURE, result.code)
+        role_ref['options'] = {'immutable': True}
+        PROVIDERS.role_api.update_role(role_ref['id'], role_ref)
+        result = self.checks.check_default_roles_are_immutable()
+        self.assertEqual(upgradecheck.Code.SUCCESS, result.code)
+        # Check domain-specific roles are not reported
+        PROVIDERS.resource_api.create_domain(
+            default_fixtures.ROOT_DOMAIN['id'],
+            default_fixtures.ROOT_DOMAIN)
+        domain_ref = unit.new_domain_ref()
+        domain = PROVIDERS.resource_api.create_domain(
+            domain_ref['id'], domain_ref)
+        role_ref = unit.new_role_ref(name='admin', domain_id=domain['id'])
+        PROVIDERS.role_api.create_role(role_ref['id'], role_ref)
+        result = self.checks.check_default_roles_are_immutable()
+        self.assertEqual(upgradecheck.Code.SUCCESS, result.code)

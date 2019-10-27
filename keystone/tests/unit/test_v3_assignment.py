@@ -22,8 +22,10 @@ from testtools import matchers
 from keystone.common import provider_api
 import keystone.conf
 from keystone import exception
+from keystone.resource.backends import base as resource_base
 from keystone.tests import unit
 from keystone.tests.unit import test_v3
+from keystone.tests.unit import utils as test_utils
 
 
 CONF = keystone.conf.CONF
@@ -117,18 +119,6 @@ class AssignmentTestCase(test_v3.RestfulTestCase,
         """Call ``DELETE /roles/{role_id}``."""
         self.delete('/roles/%(role_id)s' % {
             'role_id': self.role_id})
-
-    def test_create_member_role(self):
-        """Call ``POST /roles``."""
-        # specify only the name on creation
-        ref = unit.new_role_ref(name=CONF.member_role_name)
-        r = self.post(
-            '/roles',
-            body={'role': ref})
-        self.assertValidRoleResponse(r, ref)
-
-        # but the ID should be set as defined in CONF
-        self.assertEqual(CONF.member_role_id, r.json['role']['id'])
 
     # Role Grants tests
 
@@ -364,6 +354,37 @@ class AssignmentTestCase(test_v3.RestfulTestCase,
         self.delete(member_url)
         # Make sure the role is gone
         self.head(member_url, expected_status=http_client.NOT_FOUND)
+
+    def test_delete_group_before_removing_role_assignment_succeeds(self):
+        # Disable the cache so that we perform a fresh check of the identity
+        # backend when attempting to remove the role assignment.
+        self.config_fixture.config(group='cache', enabled=False)
+
+        # Create a new group
+        group = unit.new_group_ref(domain_id=self.domain_id)
+        group_ref = PROVIDERS.identity_api.create_group(group)
+
+        # Assign the user a role on the project
+        collection_url = (
+            '/projects/%(project_id)s/groups/%(group_id)s/roles' % {
+                'project_id': self.project_id,
+                'group_id': group_ref['id']})
+        member_url = ('%(collection_url)s/%(role_id)s' % {
+            'collection_url': collection_url,
+            'role_id': self.role_id})
+        self.put(member_url)
+
+        # Check the user has the role assigned
+        self.head(member_url)
+        self.get(member_url, expected_status=http_client.NO_CONTENT)
+
+        # Simulate removing the group via LDAP by directly removing it from the
+        # identity backend.
+        PROVIDERS.identity_api.driver.delete_group(group_ref['id'])
+
+        # Ensure we can clean up the role assignment even though the group
+        # doesn't exist
+        self.delete(member_url)
 
     def test_delete_user_before_removing_system_assignments_succeeds(self):
         system_role = self._create_new_role()
@@ -1154,7 +1175,7 @@ class RoleAssignmentBaseTestCase(test_v3.RestfulTestCase,
     MAX_HIERARCHY_BREADTH = 3
     MAX_HIERARCHY_DEPTH = CONF.max_project_tree_depth - 1
 
-    def load_sample_data(self, enable_sqlite_foreign_key=False):
+    def load_sample_data(self):
         """Create sample data to be used on tests.
 
         Created data are i) a role and ii) a domain containing: a project
@@ -1673,7 +1694,8 @@ class AssignmentInheritanceTestCase(test_v3.RestfulTestCase,
             # Define URLs
             direct_url = '%s/users/%s/roles/%s' % (
                 target_url, self.user_id, role['id'])
-            inherited_url = '/OS-INHERIT/%s/inherited_to_projects' % direct_url
+            inherited_url = ('/OS-INHERIT/%s/inherited_to_projects' %
+                             direct_url.lstrip('/'))
 
             # Create the direct assignment
             self.put(direct_url)
@@ -1946,6 +1968,61 @@ class AssignmentInheritanceTestCase(test_v3.RestfulTestCase,
         PROVIDERS.role_api.create_role(role['id'], role)
 
         self._test_list_role_assignments_include_names(role)
+
+    @test_utils.wip("Skipped until Bug 1754677 is resolved")
+    def test_remove_assignment_for_project_acting_as_domain(self):
+        """Test goal: remove assignment for project acting as domain.
+
+        Ensure when we have two role assignments for the project
+        acting as domain, one dealing with it as a domain and other as a
+        project, we still able to remove those assignments later.
+
+        Test plan:
+        - Create a role and a domain with a user;
+        - Grant a role for this user in this domain;
+        - Grant a role for this user in the same entity as a project;
+        - Ensure that both assignments were created and it was valid;
+        - Remove the domain assignment for the user and show that the project
+        assignment for him still valid
+
+        """
+        role = unit.new_role_ref()
+        PROVIDERS.role_api.create_role(role['id'], role)
+        domain = unit.new_domain_ref()
+        PROVIDERS.resource_api.create_domain(domain['id'], domain)
+        user = unit.create_user(PROVIDERS.identity_api, domain_id=domain['id'])
+
+        assignment_domain = self.build_role_assignment_entity(
+            role_id=role['id'], domain_id=domain['id'], user_id=user['id'],
+            inherited_to_projects=False)
+        assignment_project = self.build_role_assignment_entity(
+            role_id=role['id'], project_id=domain['id'], user_id=user['id'],
+            inherited_to_projects=False)
+
+        self.put(assignment_domain['links']['assignment'])
+        self.put(assignment_project['links']['assignment'])
+
+        collection_url = '/role_assignments?user.id=%(user_id)s' % (
+                         {'user_id': user['id']})
+        result = self.get(collection_url)
+        # We have two role assignments based in both roles for the domain and
+        # project scope
+        self.assertValidRoleAssignmentListResponse(
+            result, expected_length=2, resource_url=collection_url)
+        self.assertRoleAssignmentInListResponse(result, assignment_domain)
+
+        domain_url = '/domains/%s/users/%s/roles/%s' % (
+            domain['id'], user['id'], role['id'])
+        self.delete(domain_url)
+
+        collection_url = '/role_assignments?user.id=%(user_id)s' % (
+                         {'user_id': user['id']})
+        result = self.get(collection_url)
+        # Now we only have one assignment for the project scope since the
+        # domain scope was removed.
+        self.assertValidRoleAssignmentListResponse(
+            result, expected_length=1, resource_url=collection_url)
+        self.assertRoleAssignmentInListResponse(result, assignment_project)
 
     def test_list_inherited_role_assignments_include_names(self):
         """Call ``GET /role_assignments?include_names``.
@@ -2519,11 +2596,15 @@ class AssignmentInheritanceTestCase(test_v3.RestfulTestCase,
 
     def test_project_id_specified_if_include_subtree_specified(self):
         """When using include_subtree, you must specify a project ID."""
-        self.get('/role_assignments?include_subtree=True',
-                 expected_status=http_client.BAD_REQUEST)
-        self.get('/role_assignments?scope.project.id&'
-                 'include_subtree=True',
-                 expected_status=http_client.BAD_REQUEST)
+        r = self.get('/role_assignments?include_subtree=True',
+                     expected_status=http_client.BAD_REQUEST)
+        error_msg = ("scope.project.id must be specified if include_subtree "
+                     "is also specified")
+        self.assertEqual(error_msg, r.result['error']['message'])
+        r = self.get('/role_assignments?scope.project.id&'
+                     'include_subtree=True',
+                     expected_status=http_client.BAD_REQUEST)
+        self.assertEqual(error_msg, r.result['error']['message'])
 
     def test_get_role_assignments_for_project_tree(self):
         """Get role_assignment?scope.project.id=X&include_subtree``.
@@ -3218,7 +3299,7 @@ class DomainSpecificRoleTests(test_v3.RestfulTestCase, unit.TestCase):
 class ListUserProjectsTestCase(test_v3.RestfulTestCase):
     """Test for /users/<user>/projects."""
 
-    def load_sample_data(self, enable_sqlite_foreign_key=False):
+    def load_sample_data(self):
         # do not load base class's data, keep it focused on the tests
 
         self.auths = []
@@ -3226,6 +3307,13 @@ class ListUserProjectsTestCase(test_v3.RestfulTestCase):
         self.projects = []
         self.roles = []
         self.users = []
+
+        root_domain = unit.new_domain_ref(
+            id=resource_base.NULL_DOMAIN_ID,
+            name=resource_base.NULL_DOMAIN_ID
+        )
+        self.resource_api.create_domain(resource_base.NULL_DOMAIN_ID,
+                                        root_domain)
 
         # Create 3 sets of domain, roles, projects, and users to demonstrate
         # the right user's data is loaded and only projects they can access

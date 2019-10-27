@@ -12,24 +12,30 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+from keystone.common import validation
 from keystone.common.validation import parameter_types
 
-_registered_limit_create_properties = {
+_registered_limit_properties = {
     'service_id': parameter_types.id_string,
     'region_id': {
-        'type': 'string'
+        'type': ['null', 'string']
     },
     'resource_name': {
-        'type': 'string'
+        'type': 'string',
+        'minLength': 1,
+        'maxLength': 255
     },
     'default_limit': {
-        'type': 'integer'
-    }
+        'type': 'integer',
+        'minimum': -1,
+        'maximum': 0x7FFFFFFF  # The maximum value a signed INT may have
+    },
+    'description': validation.nullable(parameter_types.description)
 }
 
 _registered_limit_create = {
     'type': 'object',
-    'properties': _registered_limit_create_properties,
+    'properties': _registered_limit_properties,
     'additionalProperties': False,
     'required': ['service_id', 'resource_name', 'default_limit']
 }
@@ -39,54 +45,64 @@ registered_limit_create = {
     'items': _registered_limit_create,
     'minItems': 1
 }
-
-_registered_limit_update_properties = {
-    'id': parameter_types.id_string,
-    'service_id': parameter_types.id_string,
-    'region_id': {
-        'type': 'string'
-    },
-    'resource_name': {
-        'type': 'string'
-    },
-    'default_limit': {
-        'type': 'integer'
-    }
-}
-
-_registered_limit_update = {
-    'type': 'object',
-    'properties': _registered_limit_update_properties,
-    'additionalProperties': False,
-    'required': ['id', ]
-}
-
 registered_limit_update = {
-    'type': 'array',
-    'items': _registered_limit_update,
-    'minItems': 1
+    'type': 'object',
+    'properties': _registered_limit_properties,
+    'additionalProperties': False,
 }
 
-_limit_create_properties = {
+_project_limit_create_properties = {
     'project_id': parameter_types.id_string,
     'service_id': parameter_types.id_string,
     'region_id': {
         'type': 'string'
     },
     'resource_name': {
-        'type': 'string'
+        'type': 'string',
+        'minLength': 1,
+        'maxLength': 255
     },
     'resource_limit': {
-        'type': 'integer'
-    }
+        'type': 'integer',
+        'minimum': -1,
+        'maximum': 0x7FFFFFFF  # The maximum value a signed INT may have
+    },
+    'description': validation.nullable(parameter_types.description)
 }
 
+_domain_limit_create_properties = {
+    'domain_id': parameter_types.id_string,
+    'service_id': parameter_types.id_string,
+    'region_id': {
+        'type': 'string'
+    },
+    'resource_name': {
+        'type': 'string',
+        'minLength': 1,
+        'maxLength': 255
+    },
+    'resource_limit': {
+        'type': 'integer',
+        'minimum': -1,
+        'maximum': 0x7FFFFFFF  # The maximum value a signed INT may have
+    },
+    'description': validation.nullable(parameter_types.description)
+}
 
 _limit_create = {
     'type': 'object',
-    'properties': _limit_create_properties,
-    'additionalProperties': False,
-    'required': ['project_id', 'service_id', 'resource_name', 'resource_limit']
+    'oneOf': [
+        {'properties': _project_limit_create_properties,
+         'required': ['project_id', 'service_id', 'resource_name',
+                      'resource_limit'],
+         'additionalProperties': False,
+         },
+        {'properties': _domain_limit_create_properties,
+         'required': ['domain_id', 'service_id', 'resource_name',
+                      'resource_limit'],
+         'additionalProperties': False,
+         },
+    ]
 }
 
 limit_create = {
@@ -96,21 +112,16 @@ limit_create = {
 }
 
 _limit_update_properties = {
-    'id': parameter_types.id_string,
     'resource_limit': {
-        'type': 'integer'
-    }
-}
-
-_limit_update = {
-    'type': 'object',
-    'properties': _limit_update_properties,
-    'additionalProperties': False,
-    'required': ['id', 'resource_limit']
+        'type': 'integer',
+        'minimum': -1,
+        'maximum': 0x7FFFFFFF  # The maximum value a signed INT may have
+    },
+    'description': validation.nullable(parameter_types.description)
 }
 
 limit_update = {
-    'type': 'array',
-    'items': _limit_update,
-    'minItems': 1
+    'type': 'object',
+    'properties': _limit_update_properties,
+    'additionalProperties': False
 }

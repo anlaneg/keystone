@@ -70,8 +70,8 @@ class LiveLDAPPoolIdentity(test_backend_ldap_pool.LdapPoolCommonTestMixin,
 
         with _get_conn() as c1:  # 1
             self.assertEqual(1, len(ldappool_cm))
-            self.assertTrue(c1.connected, True)
-            self.assertTrue(c1.active, True)
+            self.assertTrue(c1.connected)
+            self.assertTrue(c1.active)
             with _get_conn() as c2:  # conn2
                 self.assertEqual(2, len(ldappool_cm))
                 self.assertTrue(c2.connected)
@@ -109,10 +109,10 @@ class LiveLDAPPoolIdentity(test_backend_ldap_pool.LdapPoolCommonTestMixin,
                                 CONF.identity.default_domain_id,
                                 password=password)
 
-        PROVIDERS.identity_api.authenticate(
-            self.make_request(),
-            user_id=user['id'],
-            password=password)
+        with self.make_request():
+            PROVIDERS.identity_api.authenticate(
+                user_id=user['id'],
+                password=password)
 
         return PROVIDERS.identity_api.get_user(user['id'])
 
@@ -179,8 +179,9 @@ class LiveLDAPPoolIdentity(test_backend_ldap_pool.LdapPoolCommonTestMixin,
         # successfully which is not desired if password change is frequent
         # use case in a deployment.
         # This can happen in multiple concurrent connections case only.
-        user_ref = PROVIDERS.identity_api.authenticate(
-            self.make_request(), user_id=user['id'], password=old_password)
+        with self.make_request():
+            user_ref = PROVIDERS.identity_api.authenticate(
+                user_id=user['id'], password=old_password)
 
         self.assertDictEqual(user, user_ref)
 

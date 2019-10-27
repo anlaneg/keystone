@@ -174,6 +174,7 @@ class Catalog(base.CatalogDriverBase):
             for attr in Region.attributes:
                 if attr != 'id':
                     setattr(ref, attr, getattr(new_region, attr))
+            ref.extra = new_region.extra
             return ref.to_dict()
 
     # Services
@@ -547,10 +548,11 @@ class Catalog(base.CatalogDriverBase):
         else:
             return endpoint_group_project_ref
 
-    def list_endpoint_groups(self):
+    def list_endpoint_groups(self, hints):
         with sql.session_for_read() as session:
             query = session.query(EndpointGroup)
-            endpoint_group_refs = query.all()
+            endpoint_group_refs = sql.filter_limit_query(
+                EndpointGroup, query, hints)
             return [e.to_dict() for e in endpoint_group_refs]
 
     def list_endpoint_groups_for_project(self, project_id):

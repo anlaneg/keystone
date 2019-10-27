@@ -10,13 +10,23 @@ optionally, grants authorization on a specific project, domain, or the
 deployment system.
 
 The body of an authentication request must include a payload that
-specifies the authentication method, which is ``password`` or
+specifies the authentication methods, which are normally just ``password`` or
 ``token``, the credentials, and, optionally, the authorization
 scope. You can scope a token to a project, domain, the deployment system, or
 the token can be unscoped. You cannot scope a token to multiple scope targets.
 
 Tokens have IDs, which the Identity API returns in the
 ``X-Subject-Token`` response header.
+
+In the case of multi-factor authentication (MFA) more than one authentication
+method needs to be supplied to authenticate. As of v3.12 a failure due to MFA
+rules only partially being met will result in an auth receipt ID being returned
+in the response header ``Openstack-Auth-Receipt``, and a response body that
+details the receipt itself and the missing authentication methods. Supplying
+the auth receipt ID in the ``Openstack-Auth-Receipt`` header in a follow-up
+authentication request, with the missing authentication methods, will result in
+a valid token by reusing the successful methods from the first request. This
+allows MFA authentication to be a multi-step process.
 
 After you obtain an authentication token, you can:
 
@@ -74,6 +84,10 @@ These authentication errors can occur:
 |                        | - The specified ``X-Auth-Token`` header is not valid.                |
 |                        |                                                                      |
 |                        | - The authentication credentials are not valid.                      |
+|                        |                                                                      |
+|                        | - Not all MFA rules were satisfied.                                  |
+|                        |                                                                      |
+|                        | - The specified ``Openstack-Auth-Receipt`` header is not valid.      |
 +------------------------+----------------------------------------------------------------------+
 | ``Forbidden (403)``    | The identity was successfully authenticated but it is not            |
 |                        | authorized to perform the requested action.                          |
@@ -114,7 +128,7 @@ Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - nocatalog: nocatalog
+   - nocatalog: request_nocatalog_unscoped_path_not_required
    - domain: domain
    - name: user_name
    - auth: auth
@@ -162,11 +176,6 @@ Status Codes
    - 401
    - 403
    - 404
-   - 405
-   - 409
-   - 413
-   - 415
-   - 503
 
 Example
 ~~~~~~~
@@ -180,11 +189,13 @@ Password authentication with scoped authorization
 
 .. rest_method::  POST /v3/auth/tokens
 
-Authenticates an identity and generates a token. Uses the password authentication method and scopes authorization to a project or domain.
+Authenticates an identity and generates a token. Uses the password
+authentication method and scopes authorization to a project, domain, or the
+system.
 
-The request body must include a payload that specifies the
-``password`` authentication method, the credentials, and the
-``project`` or ``domain`` authorization scope.
+The request body must include a payload that specifies the ``password``
+authentication method which includes the credentials in addition to a
+``project``, ``domain``, or ``system`` authorization scope.
 
 Relationship: ``https://docs.openstack.org/api/openstack-identity/3/rel/auth_tokens``
 
@@ -206,10 +217,34 @@ Parameters
    - identity: identity
    - methods: auth_methods_passwd
 
-Example
-~~~~~~~
+System-Scoped Example
+~~~~~~~~~~~~~~~~~~~~~
 
-.. literalinclude:: ./samples/admin/auth-password-project-scoped-request.json
+.. literalinclude:: ./samples/auth/requests/system-password.json
+   :language: javascript
+
+Domain-Scoped with Domain ID Example
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/requests/domain-id-password.json
+   :language: javascript
+
+Domain-Scoped with Domain Name Example
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/requests/domain-name-password.json
+   :language: javascript
+
+Project-Scoped with Project ID Example
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/requests/project-id-password.json
+   :language: javascript
+
+Project-Scoped with Project Name Example
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/requests/project-name-password.json
    :language: javascript
 
 Response
@@ -221,7 +256,6 @@ Parameters
 .. rest_parameters:: parameters.yaml
 
    - X-Subject-Token: X-Subject-Token
-   - domain: domain
    - region_id: region_id_required
    - methods: auth_methods_passwd
    - roles: roles
@@ -229,8 +263,9 @@ Parameters
    - region: endpoint_region
    - token: token
    - expires_at: expires_at
-   - project: project
-   - system: system
+   - system: system_scope_response_body_optional
+   - domain: domain_scope_response_body_optional
+   - project: project_scope_response_body_optional
    - issued_at: issued_at
    - catalog: catalog
    - user: user
@@ -254,18 +289,24 @@ Status Codes
    - 401
    - 403
    - 404
-   - 405
-   - 409
-   - 413
-   - 415
-   - 503
 
-Example
-~~~~~~~
+System-Scoped Example
+~~~~~~~~~~~~~~~~~~~~~
 
-.. literalinclude:: ./samples/admin/auth-password-project-scoped-response.json
+.. literalinclude:: ./samples/auth/responses/system-scoped-password.json
    :language: javascript
 
+Domain-Scoped Example
+~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/responses/domain-scoped-password.json
+   :language: javascript
+
+Project-Scoped Example
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/responses/project-scoped-password.json
+   :language: javascript
 
 Password authentication with explicit unscoped authorization
 ============================================================
@@ -288,7 +329,7 @@ Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - nocatalog: nocatalog
+   - nocatalog: request_nocatalog_unscoped_path_not_required
    - name: user_name
    - auth: auth
    - user: user
@@ -335,13 +376,7 @@ Status Codes
 
    - 400
    - 401
-   - 403
    - 404
-   - 405
-   - 409
-   - 413
-   - 415
-   - 503
 
 Example
 ~~~~~~~
@@ -369,7 +404,7 @@ Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - nocatalog: nocatalog
+   - nocatalog: request_nocatalog_unscoped_path_not_required
    - identity: identity
    - token: auth_token
    - id: auth_token_id
@@ -404,11 +439,6 @@ Status Codes
    - 401
    - 403
    - 404
-   - 405
-   - 409
-   - 413
-   - 415
-   - 503
 
 Example
 ~~~~~~~
@@ -422,10 +452,12 @@ Token authentication with scoped authorization
 
 .. rest_method::  POST /v3/auth/tokens
 
-Authenticates an identity and generates a token. Uses the token authentication method and scopes authorization to a project or domain.
+Authenticates an identity and generates a token. Uses the token authentication
+method and scopes authorization to a project, domain, or the system.
 
-In the request body, provide the token ID and the ``project`` or
-``domain`` authorization scope.
+The request body must include a payload that specifies the ``token``
+authentication method which includes the token in addition to a ``project``,
+``domain``, or ``system`` authorization scope.
 
 Relationship: ``https://docs.openstack.org/api/openstack-identity/3/rel/auth_tokens``
 
@@ -446,10 +478,34 @@ Parameters
    - id: auth_token_id
    - identity: identity
 
-Example
-~~~~~~~
+System-Scoped Example
+~~~~~~~~~~~~~~~~~~~~~
 
-.. literalinclude:: ./samples/admin/auth-token-scoped-request.json
+.. literalinclude:: ./samples/auth/requests/system-token.json
+   :language: javascript
+
+Domain-Scoped with Domain ID Example
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/requests/domain-id-token.json
+   :language: javascript
+
+Domain-Scoped with Domain Name Example
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/requests/domain-name-token.json
+   :language: javascript
+
+Project-Scoped with Project ID Example
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/requests/project-id-token.json
+   :language: javascript
+
+Project-Scoped with Project Name Example
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/requests/project-name-token.json
    :language: javascript
 
 Response
@@ -461,6 +517,25 @@ Parameters
 .. rest_parameters:: parameters.yaml
 
    - X-Subject-Token: X-Subject-Token
+   - region_id: region_id_required
+   - methods: auth_methods_passwd
+   - roles: roles
+   - url: endpoint_url
+   - region: endpoint_region
+   - token: token
+   - expires_at: expires_at
+   - system: system_scope_response_body_optional
+   - domain: domain_scope_response_body_optional
+   - project: project_scope_response_body_optional
+   - issued_at: issued_at
+   - catalog: catalog
+   - user: user
+   - audit_ids: audit_ids
+   - interface: endpoint_interface
+   - endpoints: endpoints
+   - type: endpoint_type
+   - id: user_id
+   - name: user_name
 
 Status Codes
 ~~~~~~~~~~~~
@@ -475,18 +550,24 @@ Status Codes
    - 401
    - 403
    - 404
-   - 405
-   - 409
-   - 413
-   - 415
-   - 503
 
-Example
-~~~~~~~
+System-Scoped Example
+~~~~~~~~~~~~~~~~~~~~~
 
-.. literalinclude:: ./samples/admin/auth-token-scoped-response.json
+.. literalinclude:: ./samples/auth/responses/system-scoped-token.json
    :language: javascript
 
+Domain-Scoped Example
+~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/responses/domain-scoped-token.json
+   :language: javascript
+
+Project-Scoped Example
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/responses/project-scoped-token.json
+   :language: javascript
 
 Token authentication with explicit unscoped authorization
 =========================================================
@@ -509,7 +590,7 @@ Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - nocatalog: nocatalog
+   - nocatalog: request_nocatalog_unscoped_path_not_required
    - methods: auth_methods_token
    - auth: auth
    - token: auth_token
@@ -545,19 +626,175 @@ Status Codes
 
    - 400
    - 401
-   - 403
    - 404
-   - 405
-   - 409
-   - 413
-   - 415
-   - 503
 
 Example
 ~~~~~~~
 
 .. literalinclude:: ./samples/admin/auth-token-unscoped-response.json
    :language: javascript
+
+
+Multi-Step authentication (2-Factor Password and TOTP example)
+==============================================================
+
+.. rest_method::  POST /v3/auth/tokens
+
+Authenticates an identity and generates a token. Uses the password
+authentication method, then the totp method, with an auth receipt in between.
+
+This assumes that MFA has been enabled for the user, and a rule has been
+defined requiring authentication with both password and totp.
+
+The first request body must at least include a payload that specifies one of
+``password`` or ``totp`` authentication methods which includes the credentials
+in addition to an optional scope. If only one method is supplied then an auth
+receipt will be returned. Scope is not retained in the receipt and must be
+resupplied in subsequent requests.
+
+While it is very possible to supply all the required auth methods at once, this
+example shows the multi-step process which is likely to be more common.
+
+More than 2 factors can be used but the same process applies to those as well;
+either all auth methods are supplied at once, or in steps with one or more auth
+receipts in between.
+
+Relationship: ``https://docs.openstack.org/api/openstack-identity/3/rel/auth_tokens``
+
+First Request
+-------------
+
+Parameters
+~~~~~~~~~~
+
+.. rest_parameters:: parameters.yaml
+
+  - nocatalog: nocatalog
+  - name: user_name
+  - auth: auth
+  - user: user
+  - scope: scope_string
+  - password: password
+  - id: user_id
+  - identity: identity
+  - methods: auth_methods_passwd
+
+Example
+~~~~~~~
+
+.. literalinclude:: ./samples/auth/requests/project-id-password.json
+   :language: javascript
+
+Response
+--------
+
+Here we are expecting a 401 status, and a returned auth receipt.
+
+Parameters
+~~~~~~~~~~
+
+.. rest_parameters:: parameters.yaml
+
+  - Openstack-Auth-Receipt: Openstack-Auth-Receipt
+  - methods: auth_methods_receipt
+  - expires_at: receipt_expires_at
+  - issued_at: receipt_issued_at
+  - user: user
+  - required_auth_methods: required_auth_methods
+
+Status Code
+~~~~~~~~~~~
+
+.. rest_status_code:: success status.yaml
+
+  - 401: auth_receipt
+
+.. rest_status_code:: error status.yaml
+
+  - 400
+  - 401: auth_failed
+  - 403
+  - 404
+
+Auth Receipt Example
+~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/responses/auth-receipt-password.json
+   :language: javascript
+
+Second Request
+--------------
+
+Parameters
+~~~~~~~~~~
+
+.. rest_parameters:: parameters.yaml
+
+  - Openstack-Auth-Receipt: Openstack-Auth-Receipt
+  - nocatalog: nocatalog
+  - name: user_name
+  - auth: auth
+  - user: user
+  - scope: scope_string
+  - totp: totp
+  - id: user_id
+  - identity: identity
+  - methods: auth_methods_totp
+
+Example
+~~~~~~~
+
+.. literalinclude:: ./samples/auth/requests/project-id-totp.json
+   :language: javascript
+
+Response
+--------
+
+Parameters
+~~~~~~~~~~
+
+.. rest_parameters:: parameters.yaml
+
+  - X-Subject-Token: X-Subject-Token
+  - region_id: region_id_required
+  - methods: auth_methods_passwd
+  - roles: roles
+  - url: endpoint_url
+  - region: endpoint_region
+  - token: token
+  - expires_at: expires_at
+  - system: system_scope_response_body_optional
+  - domain: domain_scope_response_body_optional
+  - project: project_scope_response_body_optional
+  - issued_at: issued_at
+  - catalog: catalog
+  - user: user
+  - audit_ids: audit_ids
+  - interface: endpoint_interface
+  - endpoints: endpoints
+  - type: endpoint_type
+  - id: user_id
+  - name: user_name
+
+Status Codes
+~~~~~~~~~~~~
+
+.. rest_status_code:: success status.yaml
+
+  - 201
+
+.. rest_status_code:: error status.yaml
+
+  - 400
+  - 401: auth_receipt_failure
+  - 403
+  - 404
+
+Project-Scoped Password and TOTP Example
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/responses/project-scoped-password-totp.json
+  :language: javascript
 
 
 Validate and show information for token
@@ -596,14 +833,15 @@ Parameters
 .. rest_parameters:: parameters.yaml
 
    - X-Subject-Token: X-Subject-Token
-   - domain: domain
    - methods: auth_methods
    - links: domain_link_response_body
    - user: user
    - token: token
    - expires_at: expires_at
-   - project: project
-   - catalog: catalog
+   - catalog: catalog_response_body_optional
+   - system: system_scope_response_body_optional
+   - domain: domain_scope_response_body_optional
+   - project: project_scope_response_body_optional
    - roles: roles
    - audit_ids: audit_ids
    - issued_at: issued_at
@@ -623,16 +861,30 @@ Status Codes
    - 401
    - 403
    - 404
-   - 405
-   - 413
-   - 503
 
-Example
-~~~~~~~
+Unscoped Example
+~~~~~~~~~~~~~~~~
 
-.. literalinclude:: ./samples/admin/auth-token-unscoped-response.json
+.. literalinclude:: ./samples/auth/responses/unscoped-password.json
    :language: javascript
 
+System-Scoped Example
+~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/responses/system-scoped-password.json
+   :language: javascript
+
+Domain-Scoped Example
+~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/responses/domain-scoped-password.json
+   :language: javascript
+
+Project-Scoped Example
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/auth/responses/project-scoped-password.json
+   :language: javascript
 
 Check token
 ===========
@@ -679,9 +931,6 @@ Status Codes
    - 401
    - 403
    - 404
-   - 405
-   - 413
-   - 503
 
 Revoke token
 ============
@@ -724,11 +973,6 @@ Status Codes
    - 401
    - 403
    - 404
-   - 405
-   - 409
-   - 413
-   - 415
-   - 503
 
 Get service catalog
 ===================

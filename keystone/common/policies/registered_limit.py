@@ -18,13 +18,7 @@ registered_limit_policies = [
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'get_registered_limit',
         check_str='',
-        # Getting a single registered limit or listing all registered limits
-        # should be information accessible to everyone. By setting
-        # scope_types=['system', 'project'] we're making it so that anyone with
-        # a role on the system or a project can obtain this information.
-        # Making changes to a registered limit should be considered a protected
-        # system-level API, as noted below with scope_types=['system'].
-        scope_types=['system', 'project'],
+        scope_types=['system', 'domain', 'project'],
         description='Show registered limit details.',
         operations=[{'path': '/v3/registered_limits/{registered_limit_id}',
                      'method': 'GET'},
@@ -33,7 +27,7 @@ registered_limit_policies = [
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'list_registered_limits',
         check_str='',
-        scope_types=['system', 'project'],
+        scope_types=['system', 'domain', 'project'],
         description='List registered limits.',
         operations=[{'path': '/v3/registered_limits',
                      'method': 'GET'},
@@ -41,21 +35,21 @@ registered_limit_policies = [
                      'method': 'HEAD'}]),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'create_registered_limits',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_ADMIN,
         scope_types=['system'],
         description='Create registered limits.',
         operations=[{'path': '/v3/registered_limits',
                      'method': 'POST'}]),
     policy.DocumentedRuleDefault(
-        name=base.IDENTITY % 'update_registered_limits',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        name=base.IDENTITY % 'update_registered_limit',
+        check_str=base.SYSTEM_ADMIN,
         scope_types=['system'],
-        description='Update registered limits.',
+        description='Update registered limit.',
         operations=[{'path': '/v3/registered_limits/{registered_limit_id}',
-                     'method': 'PUT'}]),
+                     'method': 'PATCH'}]),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'delete_registered_limit',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_ADMIN,
         scope_types=['system'],
         description='Delete registered limit.',
         operations=[{'path': '/v3/registered_limits/{registered_limit_id}',

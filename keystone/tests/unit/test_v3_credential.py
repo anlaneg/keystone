@@ -17,12 +17,14 @@ import json
 import uuid
 
 from keystoneclient.contrib.ec2 import utils as ec2_utils
+import mock
+from oslo_db import exception as oslo_db_exception
 from six.moves import http_client
 from testtools import matchers
 
+from keystone.api import ec2tokens
 from keystone.common import provider_api
 from keystone.common import utils
-from keystone.contrib.ec2 import controllers
 from keystone.credential.providers import fernet as credential_fernet
 from keystone import exception
 from keystone.tests import unit
@@ -31,7 +33,7 @@ from keystone.tests.unit import test_v3
 
 
 PROVIDERS = provider_api.ProviderAPIs
-CRED_TYPE_EC2 = controllers.CRED_TYPE_EC2
+CRED_TYPE_EC2 = ec2tokens.CRED_TYPE_EC2
 
 
 class CredentialBaseTestCase(test_v3.RestfulTestCase):
@@ -113,6 +115,11 @@ class CredentialTestCase(CredentialBaseTestCase):
 
     def test_list_credentials_filtered_by_type(self):
         """Call ``GET  /credentials?type={type}``."""
+        PROVIDERS.assignment_api.create_system_grant_for_user(
+            self.user_id, self.role_id
+        )
+        token = self.get_system_scoped_token()
+
         # The type ec2 was chosen, instead of a random string,
         # because the type must be in the list of supported types
         ec2_credential = unit.new_credential_ref(user_id=uuid.uuid4().hex,
@@ -123,14 +130,14 @@ class CredentialTestCase(CredentialBaseTestCase):
             ec2_credential['id'], ec2_credential)
 
         # The type cert was chosen for the same reason as ec2
-        r = self.get('/credentials?type=cert')
+        r = self.get('/credentials?type=cert', token=token)
 
         # Testing the filter for two different types
         self.assertValidCredentialListResponse(r, ref=self.credential)
         for cred in r.result['credentials']:
             self.assertEqual('cert', cred['type'])
 
-        r_ec2 = self.get('/credentials?type=ec2')
+        r_ec2 = self.get('/credentials?type=ec2', token=token)
         self.assertThat(r_ec2.result['credentials'], matchers.HasLength(1))
         cred_ec2 = r_ec2.result['credentials'][0]
 
@@ -142,6 +149,11 @@ class CredentialTestCase(CredentialBaseTestCase):
         """Call ``GET  /credentials?user_id={user_id}&type={type}``."""
         user1_id = uuid.uuid4().hex
         user2_id = uuid.uuid4().hex
+
+        PROVIDERS.assignment_api.create_system_grant_for_user(
+            self.user_id, self.role_id
+        )
+        token = self.get_system_scoped_token()
 
         # Creating credentials for two different users
         credential_user1_ec2 = unit.new_credential_ref(user_id=user1_id,
@@ -156,7 +168,9 @@ class CredentialTestCase(CredentialBaseTestCase):
         PROVIDERS.credential_api.create_credential(
             credential_user2_cert['id'], credential_user2_cert)
 
-        r = self.get('/credentials?user_id=%s&type=ec2' % user1_id)
+        r = self.get(
+            '/credentials?user_id=%s&type=ec2' % user1_id, token=token
+        )
         self.assertValidCredentialListResponse(r, ref=credential_user1_ec2)
         self.assertThat(r.result['credentials'], matchers.HasLength(1))
         cred = r.result['credentials'][0]
@@ -249,6 +263,38 @@ class CredentialTestCase(CredentialBaseTestCase):
         self.delete(
             '/credentials/%(credential_id)s' % {
                 'credential_id': self.credential['id']})
+
+    def test_delete_credential_retries_on_deadlock(self):
+        patcher = mock.patch('sqlalchemy.orm.query.Query.delete',
+                             autospec=True)
+
+        class FakeDeadlock(object):
+            def __init__(self, mock_patcher):
+                self.deadlock_count = 2
+                self.mock_patcher = mock_patcher
+                self.patched = True
+
+            def __call__(self, *args, **kwargs):
+                if self.deadlock_count > 1:
+                    self.deadlock_count -= 1
+                else:
+                    self.mock_patcher.stop()
+                    self.patched = False
+                raise oslo_db_exception.DBDeadlock
+
+        sql_delete_mock = patcher.start()
+        side_effect = FakeDeadlock(patcher)
+        sql_delete_mock.side_effect = side_effect
+
+        try:
+            PROVIDERS.credential_api.delete_credentials_for_user(
+                user_id=self.user['id'])
+        finally:
+            if side_effect.patched:
+                patcher.stop()
+
+        # initial attempt + 1 retry
+        self.assertEqual(sql_delete_mock.call_count, 2)
 
     def test_create_ec2_credential(self):
         """Call ``POST /credentials`` for creating ec2 credential."""
@@ -370,7 +416,7 @@ class TestCredentialTrustScoped(test_v3.RestfulTestCase):
 
     def config_overrides(self):
         super(TestCredentialTrustScoped, self).config_overrides()
-        self.config_fixture.config(group='trust', enabled=True)
+        self.config_fixture.config(group='trust')
 
     def test_trust_scoped_ec2_credential(self):
         """Test creating trust scoped ec2 credential.

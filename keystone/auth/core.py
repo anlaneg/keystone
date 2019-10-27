@@ -14,8 +14,6 @@ from functools import partial
 import sys
 
 from oslo_log import log
-from oslo_log import versionutils
-from oslo_utils import importutils
 import six
 import stevedore
 
@@ -37,28 +35,15 @@ AUTH_METHODS = {}
 AUTH_PLUGINS_LOADED = False
 
 
+def _get_auth_driver_manager(namespace, plugin_name):
+    return stevedore.DriverManager(namespace, plugin_name, invoke_on_load=True)
+
+
 def load_auth_method(method):
     plugin_name = CONF.auth.get(method) or 'default'
     namespace = 'keystone.auth.%s' % method
-    try:
-        driver_manager = stevedore.DriverManager(namespace, plugin_name,
-                                                 invoke_on_load=True)
-        return driver_manager.driver
-    except RuntimeError:
-        LOG.debug('Failed to load the %s driver (%s) using stevedore, will '
-                  'attempt to load using import_object instead.',
-                  method, plugin_name)
-
-    driver = importutils.import_object(plugin_name)
-
-    msg = (_(
-        'Direct import of auth plugin %(name)r is deprecated as of Liberty in '
-        'favor of its entrypoint from %(namespace)r and may be removed in '
-        'N.') %
-        {'name': plugin_name, 'namespace': namespace})
-    versionutils.report_deprecated_feature(LOG, msg)
-
-    return driver
+    driver_manager = _get_auth_driver_manager(namespace, plugin_name)
+    return driver_manager.driver
 
 
 def load_auth_methods():
@@ -182,9 +167,11 @@ class AuthInfo(provider_api.ProviderAPIMixin, object):
             if domain_name:
                 if (CONF.resource.domain_name_url_safe == 'strict' and
                         utils.is_not_url_safe(domain_name)):
-                    msg = _('Domain name cannot contain reserved characters.')
+                    msg = 'Domain name cannot contain reserved characters.'
+                    tr_msg = _('Domain name cannot contain reserved '
+                               'characters.')
                     LOG.warning(msg)
-                    raise exception.Unauthorized(message=msg)
+                    raise exception.Unauthorized(message=tr_msg)
                 domain_ref = PROVIDERS.resource_api.get_domain_by_name(
                     domain_name)
             else:
@@ -202,9 +189,11 @@ class AuthInfo(provider_api.ProviderAPIMixin, object):
             if project_name:
                 if (CONF.resource.project_name_url_safe == 'strict' and
                         utils.is_not_url_safe(project_name)):
-                    msg = _('Project name cannot contain reserved characters.')
+                    msg = 'Project name cannot contain reserved characters.'
+                    tr_msg = _('Project name cannot contain reserved '
+                               'characters.')
                     LOG.warning(msg)
-                    raise exception.Unauthorized(message=msg)
+                    raise exception.Unauthorized(message=tr_msg)
                 if 'domain' not in project_info:
                     raise exception.ValidationError(attribute='domain',
                                                     target='project')
@@ -213,10 +202,13 @@ class AuthInfo(provider_api.ProviderAPIMixin, object):
                     project_name, domain_ref['id'])
             else:
                 project_ref = PROVIDERS.resource_api.get_project(project_id)
+                domain_id = project_ref['domain_id']
+                if not domain_id:
+                    raise exception.ProjectNotFound(project_id=project_id)
                 # NOTE(morganfainberg): The _lookup_domain method will raise
                 # exception.Unauthorized if the domain isn't found or is
                 # disabled.
-                self._lookup_domain({'id': project_ref['domain_id']})
+                self._lookup_domain({'id': domain_id})
         except exception.ProjectNotFound as e:
             LOG.warning(six.text_type(e))
             raise exception.Unauthorized(e)
@@ -261,8 +253,9 @@ class AuthInfo(provider_api.ProviderAPIMixin, object):
             user_id, hints)
         if len(app_creds) != 1:
             message = "Could not find application credential: %s" % name
+            tr_message = _("Could not find application credential: %s") % name
             LOG.warning(six.text_type(message))
-            raise exception.Unauthorized(message)
+            raise exception.Unauthorized(tr_message)
         return app_creds[0]
 
     def _set_scope_from_app_cred(self, app_cred_info):
@@ -304,8 +297,6 @@ class AuthInfo(provider_api.ProviderAPIMixin, object):
             domain_ref = self._lookup_domain(self.auth['scope']['domain'])
             self._scope_data = (domain_ref['id'], None, None, None, None)
         elif 'OS-TRUST:trust' in self.auth['scope']:
-            if not CONF.trust.enabled:
-                raise exception.Forbidden('Trusts are disabled.')
             trust_ref = self._lookup_trust(
                 self.auth['scope']['OS-TRUST:trust'])
             # TODO(ayoung): when trusts support domains, fill in domain data
@@ -423,13 +414,14 @@ class AuthInfo(provider_api.ProviderAPIMixin, object):
 class UserMFARulesValidator(provider_api.ProviderAPIMixin, object):
     """Helper object that can validate the MFA Rules."""
 
-    @property
-    def _auth_methods(self):
+    @classmethod
+    def _auth_methods(cls):
         if AUTH_PLUGINS_LOADED:
             return set(AUTH_METHODS.keys())
         raise RuntimeError(_('Auth Method Plugins are not loaded.'))
 
-    def check_auth_methods_against_rules(self, user_id, auth_methods):
+    @classmethod
+    def check_auth_methods_against_rules(cls, user_id, auth_methods):
         """Validate the MFA rules against the successful auth methods.
 
         :param user_id: The user's ID (uuid).
@@ -443,7 +435,7 @@ class UserMFARulesValidator(provider_api.ProviderAPIMixin, object):
         mfa_rules = user_ref['options'].get(ro.MFA_RULES_OPT.option_name, [])
         mfa_rules_enabled = user_ref['options'].get(
             ro.MFA_ENABLED_OPT.option_name, True)
-        rules = self._parse_rule_structure(mfa_rules, user_ref['id'])
+        rules = cls._parse_rule_structure(mfa_rules, user_ref['id'])
 
         if not rules or not mfa_rules_enabled:
             # return quickly if the rules are disabled for the user or not set
@@ -460,7 +452,7 @@ class UserMFARulesValidator(provider_api.ProviderAPIMixin, object):
             # disable an auth method, and a rule will still pass making it
             # impossible to accidently lock-out a subset of users with a
             # bad keystone.conf
-            r_set = set(r).intersection(self._auth_methods)
+            r_set = set(r).intersection(cls._auth_methods())
             if set(auth_methods).issuperset(r_set):
                 # Rule Matches no need to continue, return here.
                 LOG.debug('Auth methods for user `%(user_id)s`, `%(methods)s` '
@@ -469,7 +461,7 @@ class UserMFARulesValidator(provider_api.ProviderAPIMixin, object):
                           {'user_id': user_id,
                            'rule': list(r_set),
                            'methods': auth_methods,
-                           'loaded': self._auth_methods})
+                           'loaded': cls._auth_methods()})
                 return True
 
         LOG.debug('Auth methods for user `%(user_id)s`, `%(methods)s` did not '

@@ -23,6 +23,7 @@ from keystone.common import cache
 from keystone.common import driver_hints
 from keystone.common import manager
 from keystone.common import provider_api
+from keystone.common.resource_options import options as ro_opt
 import keystone.conf
 from keystone import exception
 from keystone.i18n import _
@@ -58,7 +59,7 @@ class Manager(manager.Manager):
     driver_namespace = 'keystone.assignment'
     _provides_api = 'assignment_api'
 
-    _SYSTEM_SCOPE_TOKEN = 'system'
+    _SYSTEM_SCOPE_TOKEN = 'system'  # nosec
     _USER_SYSTEM = 'UserSystem'
     _GROUP_SYSTEM = 'GroupSystem'
     _PROJECT = 'project'
@@ -86,10 +87,10 @@ class Manager(manager.Manager):
         return [x['id'] for
                 x in PROVIDERS.identity_api.list_groups_for_user(user_id)]
 
-    def list_user_ids_for_project(self, tenant_id):
-        PROVIDERS.resource_api.get_project(tenant_id)
+    def list_user_ids_for_project(self, project_id):
+        PROVIDERS.resource_api.get_project(project_id)
         assignment_list = self.list_role_assignments(
-            project_id=tenant_id, effective=True)
+            project_id=project_id, effective=True)
         # Use set() to process the list to remove any duplicates
         return list(set([x['user_id'] for x in assignment_list]))
 
@@ -111,7 +112,7 @@ class Manager(manager.Manager):
                 )
 
     @MEMOIZE_COMPUTED_ASSIGNMENTS
-    def get_roles_for_user_and_project(self, user_id, tenant_id):
+    def get_roles_for_user_and_project(self, user_id, project_id):
         """Get the roles associated with a user within given project.
 
         This includes roles directly assigned to the user on the
@@ -123,9 +124,29 @@ class Manager(manager.Manager):
             exist.
 
         """
-        PROVIDERS.resource_api.get_project(tenant_id)
+        PROVIDERS.resource_api.get_project(project_id)
         assignment_list = self.list_role_assignments(
-            user_id=user_id, project_id=tenant_id, effective=True)
+            user_id=user_id, project_id=project_id, effective=True)
+        # Use set() to process the list to remove any duplicates
+        return list(set([x['role_id'] for x in assignment_list]))
+
+    @MEMOIZE_COMPUTED_ASSIGNMENTS
+    def get_roles_for_trustor_and_project(self, trustor_id, project_id):
+        """Get the roles associated with a trustor within given project.
+
+        This includes roles directly assigned to the trustor on the
+        project, as well as those by virtue of group membership or
+        inheritance, but it doesn't include the domain roles.
+
+        :returns: a list of role ids.
+        :raises keystone.exception.ProjectNotFound: If the project doesn't
+            exist.
+
+        """
+        PROVIDERS.resource_api.get_project(project_id)
+        assignment_list = self.list_role_assignments(
+            user_id=trustor_id, project_id=project_id, effective=True,
+            strip_domain_roles=False)
         # Use set() to process the list to remove any duplicates
         return list(set([x['role_id'] for x in assignment_list]))
 
@@ -165,22 +186,6 @@ class Manager(manager.Manager):
         role_ids = list(set([x['role_id'] for x in assignment_list]))
         return PROVIDERS.role_api.list_roles_from_ids(role_ids)
 
-    def ensure_default_role(self):
-        try:
-            PROVIDERS.role_api.get_role(CONF.member_role_id)
-        except exception.RoleNotFound:
-            LOG.info("Creating the default role %s "
-                     "because it does not exist.",
-                     CONF.member_role_id)
-            role = {'id': CONF.member_role_id,
-                    'name': CONF.member_role_name}
-            try:
-                PROVIDERS.role_api.create_role(CONF.member_role_id, role)
-            except exception.Conflict:
-                LOG.info("Creating the default role %s failed because it "
-                         "was already created",
-                         CONF.member_role_id)
-
     @notifications.role_assignment('created')
     def _add_role_to_user_and_project_adapter(self, role_id, user_id=None,
                                               group_id=None, domain_id=None,
@@ -196,9 +201,9 @@ class Manager(manager.Manager):
         PROVIDERS.role_api.get_role(role_id)
         self.driver.add_role_to_user_and_project(user_id, project_id, role_id)
 
-    def add_role_to_user_and_project(self, user_id, tenant_id, role_id):
+    def add_role_to_user_and_project(self, user_id, project_id, role_id):
         self._add_role_to_user_and_project_adapter(
-            role_id, user_id=user_id, project_id=tenant_id)
+            role_id, user_id=user_id, project_id=project_id)
         COMPUTED_ASSIGNMENTS_REGION.invalidate()
 
     # TODO(henry-nash): We might want to consider list limiting this at some
@@ -267,9 +272,9 @@ class Manager(manager.Manager):
             role_id, group_id, user_id, project_id, domain_id
         )
 
-    def remove_role_from_user_and_project(self, user_id, tenant_id, role_id):
+    def remove_role_from_user_and_project(self, user_id, project_id, role_id):
         self._remove_role_from_user_and_project_adapter(
-            role_id, user_id=user_id, project_id=tenant_id)
+            role_id, user_id=user_id, project_id=project_id)
         COMPUTED_ASSIGNMENTS_REGION.invalidate()
 
     def _invalidate_token_cache(self, role_id, group_id, user_id, project_id,
@@ -301,7 +306,8 @@ class Manager(manager.Manager):
     @notifications.role_assignment('created')
     def create_grant(self, role_id, user_id=None, group_id=None,
                      domain_id=None, project_id=None,
-                     inherited_to_projects=False, context=None):
+                     inherited_to_projects=False,
+                     initiator=None):
         role = PROVIDERS.role_api.get_role(role_id)
         if domain_id:
             PROVIDERS.resource_api.get_domain(domain_id)
@@ -351,7 +357,8 @@ class Manager(manager.Manager):
     @notifications.role_assignment('deleted')
     def delete_grant(self, role_id, user_id=None, group_id=None,
                      domain_id=None, project_id=None,
-                     inherited_to_projects=False, context=None):
+                     inherited_to_projects=False,
+                     initiator=None):
 
         # check if role exist before any processing
         PROVIDERS.role_api.get_role(role_id)
@@ -640,8 +647,6 @@ class Manager(manager.Manager):
             indirect['role_id'] = prior_ref['role_id']
             return implied_ref
 
-        if not CONF.token.infer_roles:
-            return role_refs
         try:
             implied_roles_cache = {}
             role_refs_to_check = list(role_refs)
@@ -662,9 +667,8 @@ class Manager(manager.Manager):
                         _make_implied_ref_copy(
                             next_ref, implied_role['implied_role_id']))
                     if implied_ref in checked_role_refs:
-                        msg = ('Circular reference found '
-                               'role inference rules - %(prior_role_id)s.')
-                        LOG.error(msg, {'prior_role_id': next_ref['role_id']})
+                        # Avoid traversing a cycle
+                        continue
                     else:
                         ref_results.append(implied_ref)
                         role_refs_to_check.append(implied_ref)
@@ -1285,6 +1289,10 @@ class RoleManager(manager.Manager):
                                            name=role_name)
 
     def create_role(self, role_id, role, initiator=None):
+        # Shallow copy to help mitigate in-line changes that might impact
+        # testing. This mirrors create_user, specifically relevant for
+        # resource options.
+        role = role.copy()
         ret = self.driver.create_role(role_id, role)
         notifications.Audit.created(self._ROLE, role_id, initiator)
         if MEMOIZE.should_cache(ret):
@@ -1295,8 +1303,19 @@ class RoleManager(manager.Manager):
     def list_roles(self, hints=None):
         return self.driver.list_roles(hints or driver_hints.Hints())
 
+    def _is_immutable(self, role):
+        return role['options'].get(ro_opt.IMMUTABLE_OPT.option_name, False)
+
     def update_role(self, role_id, role, initiator=None):
         original_role = self.driver.get_role(role_id)
+        # Prevent the update of immutable set roles unless the update is
+        # exclusively used for
+        ro_opt.check_immutable_update(
+            original_resource_ref=original_role,
+            new_resource_ref=role,
+            type='role',
+            resource_id=role_id)
+
         if ('domain_id' in role and
                 role['domain_id'] != original_role['domain_id']):
             raise exception.ValidationError(
@@ -1308,6 +1327,11 @@ class RoleManager(manager.Manager):
         return ret
 
     def delete_role(self, role_id, initiator=None):
+        role = self.driver.get_role(role_id)
+        # Prevent deletion of immutable roles.
+        ro_opt.check_immutable_delete(resource_ref=role,
+                                      resource_type='role',
+                                      resource_id=role_id)
         PROVIDERS.assignment_api.delete_role_assignments(role_id)
         PROVIDERS.assignment_api._send_app_cred_notification_for_role_removal(
             role_id

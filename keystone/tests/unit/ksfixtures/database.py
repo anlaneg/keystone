@@ -53,7 +53,7 @@ def initialize_sql_session(connection_str=unit.IN_MEM_DB_CONN_STRING,
         connection=connection_str)
 
     # Enable the  Sqlite FKs for global engine by default.
-    facade = enginefacade.get_legacy_facade()
+    facade = enginefacade.writer
     engine = facade.get_engine()
     f_key = 'ON' if enforce_sqlite_fks else 'OFF'
     if engine.name == 'sqlite':
@@ -103,12 +103,11 @@ def _load_sqlalchemy_models():
 class Database(fixtures.Fixture):
     """A fixture for setting up and tearing down a database."""
 
-    def __init__(self, enable_sqlite_foreign_key=False):
+    def __init__(self):
         super(Database, self).__init__()
         initialize_sql_session()
         _load_sqlalchemy_models()
-        if enable_sqlite_foreign_key:
-            sql.enable_sqlite_foreign_key()
+        sql.enable_sqlite_foreign_key()
 
     def setUp(self):
         super(Database, self).setUp()

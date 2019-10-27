@@ -16,7 +16,7 @@ from cryptography import fernet
 from oslo_log import log
 import six
 
-from keystone.common import token_utils
+from keystone.common import fernet_utils
 import keystone.conf
 from keystone.credential.providers import core
 from keystone import exception
@@ -27,22 +27,22 @@ CONF = keystone.conf.CONF
 LOG = log.getLogger(__name__)
 
 # NOTE(lbragstad): Credential key rotation operates slightly different than
-# Fernet key rotation. Each credential holds a hash of the key that encrypted
+# token key rotation. Each credential holds a hash of the key that encrypted
 # it. This is important for credential key rotation because it helps us make
 # sure we don't over-rotate credential keys. During a rotation of credential
 # keys, if any credential has not been re-encrypted with the current primary
 # key, we can abandon the key rotation until all credentials have been migrated
 # to the new primary key. If we don't take this step, it is possible that we
-# could remove a key used to encrypt credentials, leaving them recoverable.
+# could remove a key used to encrypt credentials, leaving them unrecoverable.
 # This also means that we don't need to expose a `[credential] max_active_keys`
-# option through configuration. Instead we will use a global configuration and
-# share that across all places that need to use TokenUtils for credential
+# option through configuration. Instead we will use a global variable and share
+# that across all places that need to use FernetUtils for credential
 # encryption.
 MAX_ACTIVE_KEYS = 3
 
 
 def get_multi_fernet_keys():
-    key_utils = token_utils.TokenUtils(
+    key_utils = fernet_utils.FernetUtils(
         CONF.credential.key_repository, MAX_ACTIVE_KEYS,
         'credential')
     keys = key_utils.load_keys(use_null_key=True)
@@ -73,7 +73,7 @@ class Provider(core.Provider):
         """
         crypto, keys = get_multi_fernet_keys()
 
-        if keys[0] == token_utils.NULL_KEY:
+        if keys[0] == fernet_utils.NULL_KEY:
             LOG.warning(
                 'Encrypting credentials with the null key. Please properly '
                 'encrypt credentials using `keystone-manage credential_setup`,'
@@ -85,9 +85,10 @@ class Provider(core.Provider):
                 crypto.encrypt(credential.encode('utf-8')),
                 primary_key_hash(keys))
         except (TypeError, ValueError) as e:
-            msg = _('Credential could not be encrypted: %s') % str(e)
+            msg = 'Credential could not be encrypted: %s' % str(e)
+            tr_msg = _('Credential could not be encrypted: %s') % str(e)
             LOG.error(msg)
-            raise exception.CredentialEncryptionError(msg)
+            raise exception.CredentialEncryptionError(tr_msg)
 
     def decrypt(self, credential):
         """Attempt to decrypt a credential.
@@ -95,7 +96,7 @@ class Provider(core.Provider):
         :param credential: an encrypted credential string
         :returns: a decrypted credential
         """
-        key_utils = token_utils.TokenUtils(
+        key_utils = fernet_utils.FernetUtils(
             CONF.credential.key_repository, MAX_ACTIVE_KEYS)
         keys = key_utils.load_keys(use_null_key=True)
         fernet_keys = [fernet.Fernet(key) for key in keys]
@@ -106,7 +107,9 @@ class Provider(core.Provider):
                 credential = credential.encode('utf-8')
             return crypto.decrypt(credential).decode('utf-8')
         except (fernet.InvalidToken, TypeError, ValueError):
-            msg = _('Credential could not be decrypted. Please contact the'
-                    ' administrator')
+            msg = ('Credential could not be decrypted. Please contact the '
+                   'administrator')
+            tr_msg = _('Credential could not be decrypted. Please contact the '
+                       'administrator')
             LOG.error(msg)
-            raise exception.CredentialEncryptionError(msg)
+            raise exception.CredentialEncryptionError(tr_msg)

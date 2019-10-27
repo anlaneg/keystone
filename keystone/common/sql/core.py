@@ -124,7 +124,9 @@ class JsonBlob(sql_types.TypeDecorator):
         return jsonutils.dumps(value)
 
     def process_result_value(self, value, dialect):
-        return jsonutils.loads(value)
+        if value is not None:
+            value = jsonutils.loads(value)
+        return value
 
 
 class DateTimeInt(sql_types.TypeDecorator):
@@ -523,7 +525,7 @@ def handle_conflicts(conflict_type='object'):
                 name = None
                 field = None
                 domain_id = None
-                # First element is unnessecary for extracting name and causes
+                # First element is unnecessary for extracting name and causes
                 # object not iterable error. Remove it.
                 params = args[1:]
                 # We want to store the duplicate objects name in the error

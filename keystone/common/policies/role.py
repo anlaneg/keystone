@@ -10,14 +10,60 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+from oslo_log import versionutils
 from oslo_policy import policy
 
 from keystone.common.policies import base
 
+deprecated_get_role = policy.DeprecatedRule(
+    name=base.IDENTITY % 'get_role',
+    check_str=base.RULE_ADMIN_REQUIRED
+)
+deprecated_list_role = policy.DeprecatedRule(
+    name=base.IDENTITY % 'list_roles',
+    check_str=base.RULE_ADMIN_REQUIRED
+)
+deprecated_update_role = policy.DeprecatedRule(
+    name=base.IDENTITY % 'update_role',
+    check_str=base.RULE_ADMIN_REQUIRED
+)
+deprecated_create_role = policy.DeprecatedRule(
+    name=base.IDENTITY % 'create_role',
+    check_str=base.RULE_ADMIN_REQUIRED
+)
+deprecated_delete_role = policy.DeprecatedRule(
+    name=base.IDENTITY % 'delete_role',
+    check_str=base.RULE_ADMIN_REQUIRED
+)
+deprecated_get_domain_role = policy.DeprecatedRule(
+    name=base.IDENTITY % 'get_domain_role',
+    check_str=base.RULE_ADMIN_REQUIRED
+)
+deprecated_list_domain_roles = policy.DeprecatedRule(
+    name=base.IDENTITY % 'list_domain_roles',
+    check_str=base.RULE_ADMIN_REQUIRED
+)
+deprecated_update_domain_role = policy.DeprecatedRule(
+    name=base.IDENTITY % 'update_domain_role',
+    check_str=base.RULE_ADMIN_REQUIRED
+)
+deprecated_create_domain_role = policy.DeprecatedRule(
+    name=base.IDENTITY % 'create_domain_role',
+    check_str=base.RULE_ADMIN_REQUIRED
+)
+deprecated_delete_domain_role = policy.DeprecatedRule(
+    name=base.IDENTITY % 'delete_domain_role',
+    check_str=base.RULE_ADMIN_REQUIRED
+)
+
+DEPRECATED_REASON = (
+    "The role API is now aware of system scope and default roles."
+)
+
 role_policies = [
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'get_role',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_READER,
         # FIXME(lbragstad): Roles should be considered a system-level resource.
         # The current RBAC design of OpenStack requires configuration
         # modification depending on the roles created in keystone. Once that is
@@ -28,40 +74,55 @@ role_policies = [
         operations=[{'path': '/v3/roles/{role_id}',
                      'method': 'GET'},
                     {'path': '/v3/roles/{role_id}',
-                     'method': 'HEAD'}]),
+                     'method': 'HEAD'}],
+        deprecated_rule=deprecated_get_role,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.STEIN),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'list_roles',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_READER,
         scope_types=['system'],
         description='List roles.',
         operations=[{'path': '/v3/roles',
                      'method': 'GET'},
                     {'path': '/v3/roles',
-                     'method': 'HEAD'}]),
+                     'method': 'HEAD'}],
+        deprecated_rule=deprecated_list_role,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.STEIN),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'create_role',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_ADMIN,
         scope_types=['system'],
         description='Create role.',
         operations=[{'path': '/v3/roles',
-                     'method': 'POST'}]),
+                     'method': 'POST'}],
+        deprecated_rule=deprecated_create_role,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.STEIN),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'update_role',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_ADMIN,
         scope_types=['system'],
         description='Update role.',
         operations=[{'path': '/v3/roles/{role_id}',
-                     'method': 'PATCH'}]),
+                     'method': 'PATCH'}],
+        deprecated_rule=deprecated_update_role,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.STEIN),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'delete_role',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_ADMIN,
         scope_types=['system'],
         description='Delete role.',
         operations=[{'path': '/v3/roles/{role_id}',
-                     'method': 'DELETE'}]),
+                     'method': 'DELETE'}],
+        deprecated_rule=deprecated_delete_role,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.STEIN),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'get_domain_role',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_READER,
         # FIXME(lbragstad): Once OpenStack supports a way to make role changes
         # without having to modify policy files, scope_types for
         # domain-specific roles should include `project`. This will expose
@@ -72,37 +133,52 @@ role_policies = [
         operations=[{'path': '/v3/roles/{role_id}',
                      'method': 'GET'},
                     {'path': '/v3/roles/{role_id}',
-                     'method': 'HEAD'}]),
+                     'method': 'HEAD'}],
+        deprecated_rule=deprecated_get_domain_role,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.TRAIN),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'list_domain_roles',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_READER,
         description='List domain roles.',
         scope_types=['system'],
         operations=[{'path': '/v3/roles?domain_id={domain_id}',
                      'method': 'GET'},
                     {'path': '/v3/roles?domain_id={domain_id}',
-                     'method': 'HEAD'}]),
+                     'method': 'HEAD'}],
+        deprecated_rule=deprecated_list_domain_roles,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.TRAIN),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'create_domain_role',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_ADMIN,
         description='Create domain role.',
         scope_types=['system'],
         operations=[{'path': '/v3/roles',
-                     'method': 'POST'}]),
+                     'method': 'POST'}],
+        deprecated_rule=deprecated_create_domain_role,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.TRAIN),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'update_domain_role',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_ADMIN,
         description='Update domain role.',
         scope_types=['system'],
         operations=[{'path': '/v3/roles/{role_id}',
-                     'method': 'PATCH'}]),
+                     'method': 'PATCH'}],
+        deprecated_rule=deprecated_update_domain_role,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.TRAIN),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'delete_domain_role',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_ADMIN,
         description='Delete domain role.',
         scope_types=['system'],
         operations=[{'path': '/v3/roles/{role_id}',
-                     'method': 'DELETE'}])
+                     'method': 'DELETE'}],
+        deprecated_rule=deprecated_delete_domain_role,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.TRAIN)
 ]
 
 

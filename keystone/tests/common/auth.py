@@ -10,6 +10,8 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+from keystone.i18n import _
+
 
 class AuthTestMixin(object):
     """To hold auth building helper functions."""
@@ -23,8 +25,6 @@ class AuthTestMixin(object):
             scope_data['system'] = {'all': True}
         elif unscoped:
             scope_data['unscoped'] = {}
-        elif system:
-            scope_data['system'] = {'all': True}
         elif project_id or project_name:
             scope_data['project'] = {}
             if project_id:

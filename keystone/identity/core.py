@@ -28,7 +28,6 @@ from pycadf import reason
 
 from keystone import assignment  # TODO(lbragstad): Decouple this dependency
 from keystone.common import cache
-from keystone.common import clean
 from keystone.common import driver_hints
 from keystone.common import manager
 from keystone.common import provider_api
@@ -111,9 +110,8 @@ class DomainConfigs(provider_api.ProviderAPIMixin, dict):
         try:
             domain_ref = resource_api.get_domain_by_name(domain_name)
         except exception.DomainNotFound:
-            LOG.warning(
-                ('Invalid domain name (%s) found in config file name'),
-                domain_name)
+            LOG.warning('Invalid domain name (%s) found in config file name',
+                        domain_name)
             return
 
         # Create a new entry in the domain config dict, which contains
@@ -502,14 +500,6 @@ class Manager(manager.Manager):
 
         driver = self._select_identity_driver(domain_id)
 
-        if not driver.is_sql:
-            # The LDAP driver does not support deleting users or groups.
-            # Moreover, we shouldn't destroy users and groups in an unknown
-            # driver. The only time when we should delete users and groups is
-            # when the backend is SQL because the foreign key in the SQL table
-            # forces us to.
-            return
-
         user_refs = self.list_users(domain_scope=domain_id)
         group_refs = self.list_groups(domain_scope=domain_id)
 
@@ -526,7 +516,10 @@ class Manager(manager.Manager):
         # And finally, delete the users themselves
         for user in user_refs:
             try:
-                self.delete_user(user['id'])
+                if not driver.is_sql:
+                    PROVIDERS.shadow_users_api.delete_user(user['id'])
+                else:
+                    self.delete_user(user['id'])
             except exception.UserNotFound:
                 LOG.debug(('User %(userid)s not found when deleting domain '
                            'contents for %(domainid)s, continuing with '
@@ -631,7 +624,10 @@ class Manager(manager.Manager):
         LOG.debug('Local ID: %s', ref['id'])
         ref = ref.copy()
 
-        self._insert_domain_id_if_needed(ref, driver, domain_id, conf)
+        if not driver.is_domain_aware():
+            if not domain_id:
+                domain_id = CONF.identity.default_domain_id
+            ref['domain_id'] = domain_id
 
         if self._is_mapping_needed(driver):
             local_entity = {'domain_id': ref['domain_id'],
@@ -655,8 +651,15 @@ class Manager(manager.Manager):
         if not ref_list:
             return []
 
-        for r in ref_list:
-            self._insert_domain_id_if_needed(r, driver, domain_id, conf)
+        # If the domain_id is None that means we are running in a single
+        # backend mode, so to remain backwards compatible we will use the
+        # default domain ID.
+        if not domain_id:
+            domain_id = CONF.identity.default_domain_id
+
+        if not driver.is_domain_aware():
+            for ref in ref_list:
+                ref['domain_id'] = domain_id
 
         if not self._is_mapping_needed(driver):
             return ref_list
@@ -666,17 +669,10 @@ class Manager(manager.Manager):
         for r in ref_list:
             refs_map[(r['id'], entity_type, r['domain_id'])] = r
 
-        # NOTE(breton): there are cases when the driver is not domain aware and
-        # no domain_id was explicitely provided for list operation. domain_id
-        # gets inserted into refs, but not passed into this method. Lets use
-        # domain_id from one of the refs.
-        if not domain_id:
-            domain_id = ref_list[0]['domain_id']
-
         # fetch all mappings for the domain, lookup the user at the map built
         # at previous step and replace his id.
         domain_mappings = PROVIDERS.id_mapping_api.get_domain_mapping_list(
-            domain_id)
+            domain_id, entity_type=entity_type)
         for _mapping in domain_mappings:
             idx = (_mapping.local_id, _mapping.entity_type, _mapping.domain_id)
             try:
@@ -696,19 +692,6 @@ class Manager(manager.Manager):
                             'entity_type': entity_type}
             self._insert_new_public_id(local_entity, ref, driver)
         return ref_list
-
-    def _insert_domain_id_if_needed(self, ref, driver, domain_id, conf):
-        """Insert the domain ID into the ref, if required.
-
-        If the driver can't handle domains, then we need to insert the
-        domain_id into the entity being returned.  If the domain_id is
-        None that means we are running in a single backend mode, so to
-        remain backwardly compatible, we put in the default domain ID.
-        """
-        if not driver.is_domain_aware():
-            if domain_id is None:
-                domain_id = conf.default_domain_id
-            ref['domain_id'] = domain_id
 
     def _is_mapping_needed(self, driver):
         """Return whether mapping is needed.
@@ -759,13 +742,13 @@ class Manager(manager.Manager):
         if (not driver.is_domain_aware() and driver == self.driver and
             domain_id != CONF.identity.default_domain_id and
                 domain_id is not None):
-                    LOG.warning('Found multiple domains being mapped to a '
-                                'driver that does not support that (e.g. '
-                                'LDAP) - Domain ID: %(domain)s, '
-                                'Default Driver: %(driver)s',
-                                {'domain': domain_id,
-                                 'driver': (driver == self.driver)})
-                    raise exception.DomainNotFound(domain_id=domain_id)
+            LOG.warning('Found multiple domains being mapped to a '
+                        'driver that does not support that (e.g. '
+                        'LDAP) - Domain ID: %(domain)s, '
+                        'Default Driver: %(driver)s',
+                        {'domain': domain_id,
+                         'driver': (driver == self.driver)})
+            raise exception.DomainNotFound(domain_id=domain_id)
         return driver
 
     def _get_domain_driver_and_entity_id(self, public_id):
@@ -910,11 +893,10 @@ class Manager(manager.Manager):
     # - select the right driver for this domain
     # - clear/set domain_ids for drivers that do not support domains
     # - create any ID mapping that might be required
-
     @notifications.emit_event('authenticate')
     @domains_configured
     @exception_translated('assertion')
-    def authenticate(self, request, user_id, password):
+    def authenticate(self, user_id, password):
         domain_id, driver, entity_id = (
             self._get_domain_driver_and_entity_id(user_id))
         ref = driver.authenticate(entity_id, password)
@@ -947,9 +929,8 @@ class Manager(manager.Manager):
         user = user_ref.copy()
         if 'password' in user:
             validators.validate_password(user['password'])
-        user['name'] = clean.user_name(user['name'])
+        user['name'] = user['name'].strip()
         user.setdefault('enabled', True)
-        user['enabled'] = clean.user_enabled(user['enabled'])
         domain_id = user['domain_id']
         PROVIDERS.resource_api.get_domain(domain_id)
 
@@ -1035,26 +1016,23 @@ class Manager(manager.Manager):
                 try:
                     filter_['comparator'] = operators[op]
                 except KeyError:
-                    raise exception.InvalidOperatorError(op)
+                    raise exception.InvalidOperatorError(_op=op)
         return hints
 
     def _handle_shadow_and_local_users(self, driver, hints):
-        federated_attributes = ['idp_id', 'protocol_id', 'unique_id']
+        federated_attributes = {'idp_id', 'protocol_id', 'unique_id'}
+        fed_res = []
         for filter_ in hints.filters:
             if filter_['name'] in federated_attributes:
                 return PROVIDERS.shadow_users_api.get_federated_users(hints)
-        fed_hints = copy.deepcopy(hints)
-        res = driver.list_users(hints)
-
-        # Note: If the filters contain 'name', we should get the user from both
-        # local user and shadow user backend.
-        for filter_ in fed_hints.filters:
+            # Note: If the filters contain 'name', we should get the user from
+            # both local user and shadow user backend.
             if filter_['name'] == 'name':
+                fed_hints = copy.deepcopy(hints)
                 fed_res = PROVIDERS.shadow_users_api.get_federated_users(
                     fed_hints)
-                res += fed_res
                 break
-        return res
+        return driver.list_users(hints) + fed_res
 
     @domains_configured
     @exception_translated('user')
@@ -1100,9 +1078,7 @@ class Manager(manager.Manager):
         if 'password' in user:
             validators.validate_password(user['password'])
         if 'name' in user:
-            user['name'] = clean.user_name(user['name'])
-        if 'enabled' in user:
-            user['enabled'] = clean.user_enabled(user['enabled'])
+            user['name'] = user['name'].strip()
         if 'id' in user:
             if user_id != user['id']:
                 raise exception.ValidationError(_('Cannot change user ID'))
@@ -1147,11 +1123,22 @@ class Manager(manager.Manager):
             self._get_domain_driver_and_entity_id(user_id))
         # Get user details to invalidate the cache.
         user_old = self.get_user(user_id)
+
+        hints = driver_hints.Hints()
+        hints.add_filter('user_id', user_id)
+        fed_users = PROVIDERS.shadow_users_api.list_federated_users_info(hints)
+
         driver.delete_user(entity_id)
         PROVIDERS.assignment_api.delete_user_assignments(user_id)
         self.get_user.invalidate(self, user_id)
         self.get_user_by_name.invalidate(self, user_old['name'],
                                          user_old['domain_id'])
+        for fed_user in fed_users:
+            self.shadow_federated_user.invalidate(
+                self, fed_user['idp_id'], fed_user['protocol_id'],
+                fed_user['unique_id'], fed_user['display_name'],
+                user_old.get('extra', {}).get('email'))
+
         PROVIDERS.credential_api.delete_credentials_for_user(user_id)
         PROVIDERS.id_mapping_api.delete_id_mapping(user_id)
         notifications.Audit.deleted(self._USER, user_id, initiator)
@@ -1176,7 +1163,7 @@ class Manager(manager.Manager):
         # the underlying driver so that it could conform to rules set down by
         # that particular driver type.
         group['id'] = uuid.uuid4().hex
-        group['name'] = clean.group_name(group['name'])
+        group['name'] = group['name'].strip()
         ref = driver.create_group(group['id'], group)
 
         notifications.Audit.created(self._GROUP, group['id'], initiator)
@@ -1211,7 +1198,7 @@ class Manager(manager.Manager):
             self._get_domain_driver_and_entity_id(group_id))
         group = self._clear_domain_id_if_domain_unaware(driver, group)
         if 'name' in group:
-            group['name'] = clean.group_name(group['name'])
+            group['name'] = group['name'].strip()
         ref = driver.update_group(entity_id, group)
         self.get_group.invalidate(self, group_id)
         notifications.Audit.updated(self._GROUP, group_id, initiator)
@@ -1379,12 +1366,12 @@ class Manager(manager.Manager):
                                                 group_entity_id)
 
     @domains_configured
-    def change_password(self, request, user_id, original_password,
+    def change_password(self, user_id, original_password,
                         new_password, initiator=None):
 
         # authenticate() will raise an AssertionError if authentication fails
         try:
-            self.authenticate(request, user_id, original_password)
+            self.authenticate(user_id, original_password)
         except exception.PasswordExpired:
             # If a password has expired, we want users to be able to change it
             pass
@@ -1412,13 +1399,14 @@ class Manager(manager.Manager):
 
     @MEMOIZE
     def shadow_federated_user(self, idp_id, protocol_id, unique_id,
-                              display_name):
+                              display_name, email=None):
         """Map a federated user to a user.
 
         :param idp_id: identity provider id
         :param protocol_id: protocol id
         :param unique_id: unique id for the user within the IdP
         :param display_name: user's display name
+        :param email: user's email
 
         :returns: dictionary of the mapped User entity
         """
@@ -1428,6 +1416,10 @@ class Manager(manager.Manager):
                 idp_id, protocol_id, unique_id, display_name)
             user_dict = PROVIDERS.shadow_users_api.get_federated_user(
                 idp_id, protocol_id, unique_id)
+            if email:
+                user_ref = {"email": email}
+                self.update_user(user_dict['id'], user_ref)
+                user_dict.update({"email": email})
         except exception.UserNotFound:
             idp = PROVIDERS.federation_api.get_idp(idp_id)
             federated_dict = {
@@ -1438,7 +1430,7 @@ class Manager(manager.Manager):
             }
             user_dict = (
                 PROVIDERS.shadow_users_api.create_federated_user(
-                    idp['domain_id'], federated_dict
+                    idp['domain_id'], federated_dict, email=email
                 )
             )
         PROVIDERS.shadow_users_api.set_last_active_at(user_dict['id'])

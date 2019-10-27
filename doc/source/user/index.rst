@@ -20,11 +20,14 @@ User Documentation
 
 An end user can find the specific API documentation here, `OpenStack's Identity API`_.
 
-.. _`OpenStack's Identity API`: https://developer.openstack.org/api-ref/identity/v3
+.. _`OpenStack's Identity API`: https://docs.openstack.org/api-ref/identity/v3
 
 .. toctree::
     :maxdepth: 1
 
+    supported_clients.rst
     application_credentials.rst
+    trusts.rst
     json_home.rst
     ../api_curl_examples.rst
+    multi-factor-authentication.rst

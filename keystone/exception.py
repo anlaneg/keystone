@@ -24,6 +24,8 @@ from keystone.i18n import _
 CONF = keystone.conf.CONF
 LOG = log.getLogger(__name__)
 
+KEYSTONE_API_EXCEPTIONS = set([])
+
 # Tests use this to make exception message format errors fatal
 _FATAL_EXCEPTION_FORMAT_ERRORS = False
 
@@ -44,6 +46,21 @@ def _format_with_unicode_kwargs(msg_format, kwargs):
         return msg_format % kwargs
 
 
+class _KeystoneExceptionMeta(type):
+    """Automatically Register the Exceptions in 'KEYSTONE_API_EXCEPTIONS' list.
+
+    The `KEYSTONE_API_EXCEPTIONS` list is utilized by flask to register a
+    handler to emit sane details when the exception occurs.
+    """
+
+    def __new__(mcs, name, bases, class_dict):
+        """Create a new instance and register with KEYSTONE_API_EXCEPTIONS."""
+        cls = type.__new__(mcs, name, bases, class_dict)
+        KEYSTONE_API_EXCEPTIONS.add(cls)
+        return cls
+
+
+@six.add_metaclass(_KeystoneExceptionMeta)
 class Error(Exception):
     """Base error class.
 
@@ -105,7 +122,7 @@ class PasswordRequirementsValidationError(PasswordValidationError):
 
 class PasswordHistoryValidationError(PasswordValidationError):
     message_format = _("The new password cannot be identical to a "
-                       "previous password. The total number which"
+                       "previous password. The total number which "
                        "includes the new password must be unique is "
                        "%(unique_count)s.")
 
@@ -117,6 +134,13 @@ class PasswordAgeValidationError(PasswordValidationError):
                        "before it can be changed. Please try again in "
                        "%(days_left)d day(s) or contact your administrator to "
                        "reset your password.")
+
+
+class PasswordSelfServiceDisabled(PasswordValidationError):
+    message_format = _("You cannot change your password at this time due "
+                       "to password policy disallowing password changes. "
+                       "Please contact your administrator to reset your "
+                       "password.")
 
 
 class SchemaValidationError(ValidationError):
@@ -153,16 +177,6 @@ class StringLengthExceeded(ValidationError):
     message_format = _("String length exceeded. The length of"
                        " string '%(string)s' exceeds the limit"
                        " of column %(type)s(CHAR(%(length)d)).")
-
-
-class ValidationSizeError(Error):
-    message_format = _("Request attribute %(attribute)s must be"
-                       " less than or equal to %(size)i. The server"
-                       " could not comply with the request because"
-                       " the attribute size is invalid (too large)."
-                       " The client is assumed to be in error.")
-    code = int(http_client.BAD_REQUEST)
-    title = http_client.responses[http_client.BAD_REQUEST]
 
 
 class AmbiguityError(ValidationError):
@@ -270,12 +284,24 @@ class Unauthorized(SecurityError):
 
 
 class InsufficientAuthMethods(Error):
-    # NOTE(notmorgan): This is not a security error, this is meant to
-    # communicate real information back to the user.
+    # NOTE(adriant): This is an internal only error that is built into
+    # an auth receipt response.
     message_format = _("Insufficient auth methods received for %(user_id)s. "
                        "Auth Methods Provided: %(methods)s.")
     code = 401
     title = 'Unauthorized'
+
+    def __init__(self, message=None, user_id=None, methods=None):
+        methods_str = '[%s]' % ','.join(methods)
+        super(InsufficientAuthMethods, self).__init__(
+            message, user_id=user_id, methods=methods_str)
+
+        self.user_id = user_id
+        self.methods = methods
+
+
+class ReceiptNotFound(Unauthorized):
+    message_format = _("Could not find auth receipt: %(receipt_id)s.")
 
 
 class PasswordExpired(Unauthorized):
@@ -349,6 +375,20 @@ class InvalidDomainConfig(Forbidden):
     message_format = _("Invalid domain specific configuration: %(reason)s.")
 
 
+class InvalidLimit(Forbidden):
+    message_format = _("Invalid resource limit: %(reason)s.")
+
+
+class LimitTreeExceedError(Exception):
+    def __init__(self, project_id, max_limit_depth):
+        super(LimitTreeExceedError, self).__init__(_(
+            "Keystone cannot start due to project hierarchical depth in the "
+            "current deployment (project_ids: %(project_id)s) exceeds the "
+            "enforcement model's maximum limit of %(max_limit_depth)s. Please "
+            "use a different enforcement model to correct the issue."
+        ) % {'project_id': project_id, 'max_limit_depth': max_limit_depth})
+
+
 class NotFound(Error):
     message_format = _("Could not find: %(target)s.")
     code = int(http_client.NOT_FOUND)
@@ -387,6 +427,10 @@ class DomainSpecificRoleMismatch(Forbidden):
 class DomainSpecificRoleNotWithinIdPDomain(Forbidden):
     message_format = _("role: %(role_name)s must be within the same domain as "
                        "the identity provider: %(identity_provider)s.")
+
+
+class DomainIdInvalid(ValidationError):
+    message_format = _("Domain ID does not conform to required UUID format.")
 
 
 class RoleAssignmentNotFound(NotFound):
@@ -505,6 +549,10 @@ class ApplicationCredentialNotFound(NotFound):
                        "%(application_credential_id)s.")
 
 
+class AccessRuleNotFound(NotFound):
+    message_format = _("Could not find Access Rule: %(access_rule_id)s.")
+
+
 class Conflict(Error):
     message_format = _("Conflict occurred attempting to store %(type)s -"
                        " %(details)s.")
@@ -538,12 +586,6 @@ class UnexpectedError(SecurityError):
 class TrustConsumeMaximumAttempt(UnexpectedError):
     debug_message_format = _("Unable to consume trust %(trust_id)s. Unable to "
                              "acquire lock.")
-
-
-class CertificateFilesUnavailable(UnexpectedError):
-    debug_message_format = _("Expected signing certificates are not available "
-                             "on the server. Please check Keystone "
-                             "configuration.")
 
 
 class MalformedEndpoint(UnexpectedError):
@@ -655,3 +697,25 @@ class LDAPSizeLimitExceeded(UnexpectedError):
     message_format = _('Number of User/Group entities returned by LDAP '
                        'exceeded size limit. Contact your LDAP '
                        'administrator.')
+
+
+class CacheDeserializationError(Exception):
+
+    def __init__(self, obj, data):
+        super(CacheDeserializationError, self).__init__(
+            _('Failed to deserialize %(obj)s. Data is %(data)s') % {
+                'obj': obj, 'data': data
+            }
+        )
+
+
+class ResourceUpdateForbidden(ForbiddenNotSecurity):
+    message_format = _('Unable to update immutable %(type)s resource: '
+                       '`%(resource_id)s. Set resource option "immutable" '
+                       'to false first.')
+
+
+class ResourceDeleteForbidden(ForbiddenNotSecurity):
+    message_format = _('Unable to delete immutable %(type)s resource: '
+                       '`%(resource_id)s. Set resource option "immutable" '
+                       'to false first.')

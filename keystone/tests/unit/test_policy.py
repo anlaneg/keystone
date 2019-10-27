@@ -13,7 +13,6 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
-import json
 import os
 import subprocess
 import uuid
@@ -21,10 +20,9 @@ import uuid
 import mock
 from oslo_policy import policy as common_policy
 import six
-from testtools import matchers
 
 from keystone.common import policies
-from keystone.common import policy
+from keystone.common.rbac_enforcer import policy
 import keystone.conf
 from keystone import exception
 from keystone.tests import unit
@@ -46,7 +44,9 @@ class PolicyFileTestCase(unit.TestCase):
         self.target = {}
 
     def _policy_fixture(self):
-        return ksfixtures.Policy(self.tmpfilename, self.config_fixture)
+        return ksfixtures.Policy(
+            self.config_fixture, policy_file=self.tmpfilename
+        )
 
     def test_modified_policy_reloads(self):
         action = "example:test"
@@ -56,7 +56,7 @@ class PolicyFileTestCase(unit.TestCase):
         policy.enforce(empty_credentials, action, self.target)
         with open(self.tmpfilename, "w") as policyfile:
             policyfile.write("""{"example:test": ["false:false"]}""")
-        policy._ENFORCER.clear()
+        policy._ENFORCER._enforcer.clear()
         self.assertRaises(exception.ForbiddenAction, policy.enforce,
                           empty_credentials, action, self.target)
 
@@ -84,7 +84,7 @@ class PolicyTestCase(unit.TestCase):
 
     def _set_rules(self):
         these_rules = common_policy.Rules.from_dict(self.rules)
-        policy._ENFORCER.set_rules(these_rules)
+        policy._ENFORCER._enforcer.set_rules(these_rules)
 
     def test_enforce_nonexistent_action_throws(self):
         action = "example:noexist"
@@ -132,13 +132,12 @@ class PolicyScopeTypesEnforcementTestCase(unit.TestCase):
 
     def setUp(self):
         super(PolicyScopeTypesEnforcementTestCase, self).setUp()
-        policy.init()
         rule = common_policy.RuleDefault(
             name='foo',
             check_str='',
             scope_types=['system']
         )
-        policy._ENFORCER.register_default(rule)
+        policy._ENFORCER._enforcer.register_default(rule)
         self.credentials = {}
         self.action = 'foo'
         self.target = {}
@@ -160,7 +159,7 @@ class PolicyScopeTypesEnforcementTestCase(unit.TestCase):
         )
         with mock.patch('warnings.warn') as mock_warn:
             policy.enforce(self.credentials, self.action, self.target)
-            mock_warn.assert_called_once_with(expected_msg)
+            mock_warn.assert_called_with(expected_msg)
 
 
 class PolicyJsonTestCase(unit.TestCase):
@@ -176,19 +175,6 @@ class PolicyJsonTestCase(unit.TestCase):
             rules[rule.name] = rule.check_str
         return rules
 
-    def test_json_examples_have_matching_entries(self):
-        policy_keys = self._get_default_policy_rules()
-        cloud_policy_keys = set(
-            json.load(open(unit.dirs.etc('policy.v3cloudsample.json'))))
-
-        policy_extra_keys = ['admin_or_token_subject',
-                             'service_admin_or_token_subject',
-                             'token_subject', ]
-        expected_policy_keys = list(cloud_policy_keys) + policy_extra_keys
-        diffs = set(policy_keys).difference(set(expected_policy_keys))
-
-        self.assertThat(diffs, matchers.Equals(set()))
-
     def test_policies_loads(self):
         action = 'identity:list_projects'
         target = {'user_id': uuid.uuid4().hex,
@@ -203,16 +189,10 @@ class PolicyJsonTestCase(unit.TestCase):
                        'is_admin_project': True, 'project_id': None,
                        'domain_id': uuid.uuid4().hex}
 
-        # Since we are moving policy.json defaults to code, we instead call
-        # `policy.init()` which does the enforce setup for us with the added
-        # bonus of registering the in code default policies.
-        policy.init()
-        result = policy._ENFORCER.enforce(action, target, credentials)
-        self.assertTrue(result)
-
-        domain_policy = unit.dirs.etc('policy.v3cloudsample.json')
-        enforcer = common_policy.Enforcer(CONF, policy_file=domain_policy)
-        result = enforcer.enforce(action, target, credentials)
+        # The enforcer is setup behind the scenes and registers the in code
+        # default policies.
+        result = policy._ENFORCER._enforcer.enforce(action, target,
+                                                    credentials)
         self.assertTrue(result)
 
     def test_all_targets_documented(self):

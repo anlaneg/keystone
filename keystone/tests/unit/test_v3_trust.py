@@ -76,6 +76,30 @@ class TestTrustOperations(test_v3.RestfulTestCase):
             expected_status=http_client.BAD_REQUEST
         )
 
+    def test_trusts_do_not_implement_updates(self):
+        with self.test_client() as c:
+            # create a new trust
+            token = self.get_scoped_token()
+            ref = unit.new_trust_ref(
+                trustor_user_id=self.user_id,
+                trustee_user_id=self.trustee_user_id,
+                project_id=self.project_id,
+                role_ids=[self.role_id])
+            r = c.post('/v3/OS-TRUST/trusts',
+                       json={'trust': ref},
+                       headers={'X-Auth-Token': token})
+            trust_id = r.json['trust']['id']
+            c.patch(
+                '/v3/OS-TRUST/trusts/%(trust_id)s' % {'trust_id': trust_id},
+                json={'trust': ref},
+                headers={'X-Auth-Token': token},
+                expected_status_code=http_client.METHOD_NOT_ALLOWED)
+            c.put(
+                '/v3/OS-TRUST/trusts/%(trust_id)s' % {'trust_id': trust_id},
+                json={'trust': ref},
+                headers={'X-Auth-Token': token},
+                expected_status_code=http_client.METHOD_NOT_ALLOWED)
+
     def test_trust_crud(self):
         # create a new trust
         ref = unit.new_trust_ref(
@@ -111,12 +135,6 @@ class TestTrustOperations(test_v3.RestfulTestCase):
         # list all trusts
         r = self.get('/OS-TRUST/trusts')
         self.assertValidTrustListResponse(r, trust)
-
-        # trusts are immutable
-        self.patch(
-            '/OS-TRUST/trusts/%(trust_id)s' % {'trust_id': trust['id']},
-            body={'trust': ref},
-            expected_status=http_client.NOT_FOUND)
 
         # delete the trust
         self.delete(

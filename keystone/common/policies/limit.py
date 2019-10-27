@@ -14,17 +14,32 @@ from oslo_policy import policy
 
 from keystone.common.policies import base
 
+SYSTEM_OR_DOMAIN_OR_PROJECT_USER = (
+    '(' + base.SYSTEM_READER + ') or '
+    '('
+    'domain_id:%(target.limit.domain.id)s or '
+    'domain_id:%(target.limit.project.domain_id)s'
+    ') or '
+    '('
+    'project_id:%(target.limit.project_id)s and not '
+    'None:%(target.limit.project_id)s'
+    ')'
+)
+
 limit_policies = [
     policy.DocumentedRuleDefault(
-        name=base.IDENTITY % 'get_limit',
+        name=base.IDENTITY % 'get_limit_model',
         check_str='',
-        # Getting a single limit or listing all limits should be information
-        # accessible to everyone. By setting scope_types=['system', 'project']
-        # we're making it so that anyone with a role on the system or a project
-        # can obtain this information.  Making changes to a limit should be
-        # considered a protected system-level API, as noted below with
-        # scope_types=['system'].
-        scope_types=['system', 'project'],
+        scope_types=['system', 'domain', 'project'],
+        description='Get limit enforcement model.',
+        operations=[{'path': '/v3/limits/model',
+                     'method': 'GET'},
+                    {'path': '/v3/limits/model',
+                     'method': 'HEAD'}]),
+    policy.DocumentedRuleDefault(
+        name=base.IDENTITY % 'get_limit',
+        check_str=SYSTEM_OR_DOMAIN_OR_PROJECT_USER,
+        scope_types=['system', 'domain', 'project'],
         description='Show limit details.',
         operations=[{'path': '/v3/limits/{limit_id}',
                      'method': 'GET'},
@@ -33,7 +48,7 @@ limit_policies = [
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'list_limits',
         check_str='',
-        scope_types=['system', 'project'],
+        scope_types=['system', 'domain', 'project'],
         description='List limits.',
         operations=[{'path': '/v3/limits',
                      'method': 'GET'},
@@ -41,21 +56,21 @@ limit_policies = [
                      'method': 'HEAD'}]),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'create_limits',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_ADMIN,
         scope_types=['system'],
         description='Create limits.',
         operations=[{'path': '/v3/limits',
                      'method': 'POST'}]),
     policy.DocumentedRuleDefault(
-        name=base.IDENTITY % 'update_limits',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        name=base.IDENTITY % 'update_limit',
+        check_str=base.SYSTEM_ADMIN,
         scope_types=['system'],
-        description='Update limits.',
+        description='Update limit.',
         operations=[{'path': '/v3/limits/{limit_id}',
-                     'method': 'PUT'}]),
+                     'method': 'PATCH'}]),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'delete_limit',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_ADMIN,
         scope_types=['system'],
         description='Delete limit.',
         operations=[{'path': '/v3/limits/{limit_id}',

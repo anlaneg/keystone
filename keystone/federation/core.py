@@ -14,7 +14,10 @@
 
 import uuid
 
+from oslo_log import log
+
 from keystone.common import cache
+from keystone.common import driver_hints
 from keystone.common import manager
 from keystone.common import provider_api
 import keystone.conf
@@ -23,6 +26,7 @@ from keystone.federation import utils
 from keystone.i18n import _
 from keystone import notifications
 
+LOG = log.getLogger(__name__)
 
 # This is a general cache region for service providers.
 MEMOIZE = cache.get_memoization_decorator(group='federation')
@@ -44,6 +48,25 @@ class Manager(manager.Manager):
 
     def __init__(self):
         super(Manager, self).__init__(CONF.federation.driver)
+        notifications.register_event_callback(
+            notifications.ACTIONS.internal, notifications.DOMAIN_DELETED,
+            self._cleanup_identity_provider
+        )
+
+    def _cleanup_identity_provider(self, service, resource_type, operation,
+                                   payload):
+        domain_id = payload['resource_info']
+        hints = driver_hints.Hints()
+        hints.add_filter('domain_id', domain_id)
+        idps = self.driver.list_idps(hints=hints)
+        for idp in idps:
+            try:
+                self.delete_idp(idp['id'])
+            except exception.IdentityProviderNotFound:
+                LOG.debug(('Identity Provider %(idpid)s not found when '
+                           'deleting domain contents for %(domainid)s, '
+                           'continuing with cleanup.'),
+                          {'idpid': idp['id'], 'domainid': domain_id})
 
     def create_idp(self, idp_id, idp):
         auto_created_domain = False
@@ -149,6 +172,21 @@ class Manager(manager.Manager):
     def create_protocol(self, idp_id, protocol_id, protocol):
         self._validate_mapping_exists(protocol['mapping_id'])
         return self.driver.create_protocol(idp_id, protocol_id, protocol)
+
+    def delete_protocol(self, idp_id, protocol_id):
+        hints = driver_hints.Hints()
+        hints.add_filter('protocol_id', protocol_id)
+        shadow_users = PROVIDERS.shadow_users_api.list_federated_users_info(
+            hints)
+
+        self.driver.delete_protocol(idp_id, protocol_id)
+
+        for shadow_user in shadow_users:
+            PROVIDERS.identity_api.shadow_federated_user.invalidate(
+                PROVIDERS.identity_api, shadow_user['idp_id'],
+                shadow_user['protocol_id'], shadow_user['unique_id'],
+                shadow_user['display_name'],
+                shadow_user.get('extra', {}).get('email'))
 
     def update_protocol(self, idp_id, protocol_id, protocol):
         self._validate_mapping_exists(protocol['mapping_id'])

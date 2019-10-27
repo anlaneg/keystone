@@ -10,11 +10,11 @@ msgid ""
 msgstr ""
 "Project-Id-Version: keystone VERSION\n"
 "Report-Msgid-Bugs-To: https://bugs.launchpad.net/openstack-i18n/\n"
-"POT-Creation-Date: 2018-03-04 19:11+0000\n"
+"POT-Creation-Date: 2019-09-30 20:17+0000\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"PO-Revision-Date: 2018-02-18 01:14+0000\n"
+"PO-Revision-Date: 2018-08-08 08:58+0000\n"
 "Last-Translator: Andi Chandler <andi@gowling.com>\n"
 "Language: en_GB\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
@@ -79,47 +79,12 @@ msgid "%(prior_role_id)s does not imply %(implied_role_id)s."
 msgstr "%(prior_role_id)s does not imply %(implied_role_id)s."
 
 #, python-format
-msgid "%(property_name)s cannot be less than %(min_length)s characters."
-msgstr "%(property_name)s cannot be less than %(min_length)s characters."
-
-#, python-format
-msgid "%(property_name)s is not a %(display_expected_type)s"
-msgstr "%(property_name)s is not a %(display_expected_type)s"
-
-#, python-format
-msgid "%(property_name)s should not be greater than %(max_length)s characters."
-msgstr ""
-"%(property_name)s should not be greater than %(max_length)s characters."
-
-#, python-format
 msgid "%(role_id)s cannot be an implied roles."
 msgstr "%(role_id)s cannot be an implied roles."
 
 #, python-format
-msgid "%s cannot be empty."
-msgstr "%s cannot be empty."
-
-#, python-format
 msgid "%s field is required and cannot be empty"
 msgstr "%s field is required and cannot be empty"
-
-#, python-format
-msgid "%s field(s) cannot be empty"
-msgstr "%s field(s) cannot be empty"
-
-#, python-format
-msgid ""
-"%s for the LDAP identity backend has been deprecated in the Mitaka release "
-"in favor of read-only identity LDAP access. It will be removed in the \"O\" "
-"release."
-msgstr ""
-"%s for the LDAP identity backend has been deprecated in the Mitaka release "
-"in favour of read-only identity LDAP access. It will be removed in the \"O\" "
-"release."
-
-#, python-format
-msgid "(%(url)s): The resource could not be found."
-msgstr "(%(url)s): The resource could not be found."
 
 msgid "(Disable insecure_debug mode to suppress these details.)"
 msgstr "(Disable insecure_debug mode to suppress these details.)"
@@ -147,15 +112,6 @@ msgstr ""
 "All extensions have been moved into Keystone core and as such its migrations "
 "are maintained by the main Keystone database control. Use the command: "
 "keystone-manage db_sync"
-
-msgid ""
-"An authenticated call was made and there is no request.context. This means "
-"the auth_context middleware is not in place. You must have this middleware "
-"in your pipeline to perform authenticated calls"
-msgstr ""
-"An authenticated call was made and there is no request.context. This means "
-"the auth_context middleware is not in place. You must have this middleware "
-"in your pipeline to perform authenticated calls"
 
 msgid "An unexpected error occurred when retrieving domain configs"
 msgstr "An unexpected error occurred when retrieving domain configs"
@@ -201,9 +157,6 @@ msgstr "Auth Method Plugins are not loaded."
 msgid "Authentication plugin error."
 msgstr "Authentication plugin error."
 
-msgid "Cannot Authenticate due to internal error."
-msgstr "Cannot Authenticate due to internal error."
-
 msgid "Cannot authorize a request token with a token issued via delegation."
 msgstr "Cannot authorise a request token with a token issued via delegation."
 
@@ -219,9 +172,6 @@ msgstr "Cannot change user ID"
 
 msgid "Cannot change user name"
 msgstr "Cannot change user name"
-
-msgid "Cannot create an application credential for another user"
-msgstr "Cannot create an application credential for another user"
 
 #, python-format
 msgid "Cannot create an endpoint with an invalid URL: %(url)s."
@@ -279,13 +229,6 @@ msgstr "Cannot list assignments sourced from groups and filtered by user ID."
 
 msgid "Cannot list request tokens with a token issued via delegation."
 msgstr "Cannot list request tokens with a token issued via delegation."
-
-msgid "Cannot list trusts for another user"
-msgstr "Cannot list trusts for another user"
-
-#, python-format
-msgid "Cannot open certificate %(cert_file)s. Reason: %(reason)s"
-msgstr "Cannot open certificate %(cert_file)s. Reason: %(reason)s"
 
 #, python-format
 msgid "Cannot remove role that has not been granted, %s"
@@ -486,13 +429,6 @@ msgstr ""
 msgid "Could not validate the access token"
 msgstr "Could not validate the access token"
 
-#, python-format
-msgid "Could not verify unknown bind: {%(bind_type)s: %(identifier)s}"
-msgstr "Could not verify unknown bind: {%(bind_type)s: %(identifier)s}"
-
-msgid "Credential belongs to another user"
-msgstr "Credential belongs to another user"
-
 msgid "Credential could not be decrypted. Please contact the administrator"
 msgstr "Credential could not be decrypted. Please contact the administrator"
 
@@ -502,14 +438,6 @@ msgstr "Credential could not be encrypted: %s"
 
 msgid "Credential signature mismatch"
 msgstr "Credential signature mismatch"
-
-#, python-format
-msgid ""
-"Direct import of auth plugin %(name)r is deprecated as of Liberty in favor "
-"of its entrypoint from %(namespace)r and may be removed in N."
-msgstr ""
-"Direct import of auth plugin %(name)r is deprecated as of Liberty in favour "
-"of its entrypoint from %(namespace)r and may be removed in N."
 
 msgid ""
 "Disabling an entity where the 'enable' attribute is ignored by configuration."
@@ -578,11 +506,6 @@ msgstr "EC2 access key not found."
 msgid "EC2 signature not supplied."
 msgstr "EC2 signature not supplied."
 
-msgid ""
-"Either --bootstrap-password argument or OS_BOOTSTRAP_PASSWORD must be set."
-msgstr ""
-"Either --bootstrap-password argument or OS_BOOTSTRAP_PASSWORD must be set."
-
 #, python-format
 msgid "Endpoint %(endpoint_id)s not found in project %(project_id)s"
 msgstr "Endpoint %(endpoint_id)s not found in project %(project_id)s"
@@ -638,13 +561,6 @@ msgstr "Expected boolean value, got %r"
 msgid "Expected dict or list: %s"
 msgstr "Expected dict or list: %s"
 
-msgid ""
-"Expected signing certificates are not available on the server. Please check "
-"Keystone configuration."
-msgstr ""
-"Expected signing certificates are not available on the server. Please check "
-"Keystone configuration."
-
 #, python-format
 msgid ""
 "Expecting to find %(attribute)s in %(target)s. The server could not comply "
@@ -654,6 +570,10 @@ msgstr ""
 "Expecting to find %(attribute)s in %(target)s. The server could not comply "
 "with the request since it is either malformed or otherwise incorrect. The "
 "client is assumed to be in error."
+
+#, python-format
+msgid "Failed to deserialize %(obj)s. Data is %(data)s"
+msgstr "Failed to deserialise %(obj)s. Data is %(data)s"
 
 msgid "Failed to validate token"
 msgstr "Failed to validate token"
@@ -668,9 +588,6 @@ msgid ""
 msgstr ""
 "Field \"remaining_uses\" is set to %(value)s while it must not be set in "
 "order to redelegate a trust"
-
-msgid "Found invalid token: scoped to both project and domain."
-msgstr "Found invalid token: scoped to both project and domain."
 
 msgid "Global role cannot imply a domain-specific role"
 msgstr "Global role cannot imply a domain-specific role"
@@ -726,6 +643,12 @@ msgstr ""
 "Insufficient auth methods received for %(user_id)s. Auth Methods Provided: "
 "%(methods)s."
 
+msgid "Internal RBAC enforcement error, invalid rule (action) name."
+msgstr "Internal RBAC enforcement error, invalid rule (action) name."
+
+msgid "Internal error processing authentication and authorization."
+msgstr "Internal error processing authentication and authorisation."
+
 msgid "Invalid EC2 signature."
 msgstr "Invalid EC2 signature."
 
@@ -754,10 +677,6 @@ msgstr "Invalid application credential ID or secret"
 #, python-format
 msgid "Invalid application credential: %(detail)s"
 msgstr "Invalid application credential: %(detail)s"
-
-#, python-format
-msgid "Invalid audit info data type: %(data)s (%(type)s)"
-msgstr "Invalid audit info data type: %(data)s (%(type)s)"
 
 msgid "Invalid blob in credential"
 msgstr "Invalid blob in credential"
@@ -827,6 +746,10 @@ msgstr ""
 "%(service_id)s, Region: %(region_id)s."
 
 #, python-format
+msgid "Invalid resource limit: %(reason)s."
+msgstr "Invalid resource limit: %(reason)s."
+
+#, python-format
 msgid ""
 "Invalid rule: %(identity_value)s. Both 'groups' and 'domain' keywords must "
 "be specified."
@@ -837,9 +760,6 @@ msgstr ""
 msgid "Invalid signature"
 msgstr "Invalid signature"
 
-msgid "Invalid signature."
-msgstr "Invalid signature."
-
 msgid "Invalid user / password"
 msgstr "Invalid user / password"
 
@@ -849,11 +769,17 @@ msgstr "Invalid username or TOTP passcode"
 msgid "Invalid username or password"
 msgstr "Invalid username or password"
 
-msgid "Kerberos credentials do not match those in bind"
-msgstr "Kerberos credentials do not match those in bind"
-
-msgid "Kerberos credentials required and not present"
-msgstr "Kerberos credentials required and not present"
+#, python-format
+msgid ""
+"Keystone cannot start due to project hierarchical depth in the current "
+"deployment (project_ids: %(project_id)s) exceeds the enforcement model's "
+"maximum limit of %(max_limit_depth)s. Please use a different enforcement "
+"model to correct the issue."
+msgstr ""
+"Keystone cannot start due to project hierarchical depth in the current "
+"deployment (project_ids: %(project_id)s) exceeds the enforcement model's "
+"maximum limit of %(max_limit_depth)s. Please use a different enforcement "
+"model to correct the issue."
 
 msgid "LDAP does not support write operations"
 msgstr "LDAP does not support write operations"
@@ -903,10 +829,6 @@ msgstr "Multiple domains are not supported"
 msgid "Must specify either domain or project"
 msgstr "Must specify either domain or project"
 
-#, python-format
-msgid "Named bind mode %(name)s not in bind information"
-msgstr "Named bind mode %(name)s not in bind information"
-
 msgid "Neither Project Domain ID nor Project Domain Name was provided."
 msgstr "Neither Project Domain ID nor Project Domain Name was provided."
 
@@ -919,9 +841,6 @@ msgstr ""
 
 msgid "No authenticated user"
 msgstr "No authenticated user"
-
-msgid "No bind information present in token."
-msgstr "No bind information present in token."
 
 msgid "No domain information specified as part of list request"
 msgstr "No domain information specified as part of list request"
@@ -944,9 +863,6 @@ msgstr "No remaining uses for trust: %(trust_id)s."
 
 msgid "No token in the request"
 msgstr "No token in the request"
-
-msgid "Non-default domain is not supported"
-msgstr "Non-default domain is not supported"
 
 msgid ""
 "Number of User/Group entities returned by LDAP exceeded size limit. Contact "
@@ -1029,9 +945,6 @@ msgstr "Provided consumer key does not match stored consumer key."
 msgid "Provided verifier does not match stored verifier"
 msgstr "Provided verifier does not match stored verifier"
 
-msgid "Query string is not UTF-8 encoded"
-msgstr "Query string is not UTF-8 encoded"
-
 msgid ""
 "Reading security compliance information for any domain other than the "
 "default domain is not allowed or supported."
@@ -1065,16 +978,6 @@ msgstr ""
 
 msgid "Request Token does not have an authorizing user id."
 msgstr "Request Token does not have an authorising user id."
-
-#, python-format
-msgid ""
-"Request attribute %(attribute)s must be less than or equal to %(size)i. The "
-"server could not comply with the request because the attribute size is "
-"invalid (too large). The client is assumed to be in error."
-msgstr ""
-"Request attribute %(attribute)s must be less than or equal to %(size)i. The "
-"server could not comply with the request because the attribute size is "
-"invalid (too large). The client is assumed to be in error."
 
 msgid "Request must have an origin query parameter"
 msgstr "Request must have an origin query parameter"
@@ -1131,12 +1034,6 @@ msgstr "Specify a domain or project, not both"
 msgid "Specify a user or group, not both"
 msgstr "Specify a user or group, not both"
 
-msgid "Specify one of domain or project"
-msgstr "Specify one of domain or project"
-
-msgid "Specify one of user or group"
-msgstr "Specify one of user or group"
-
 msgid "Specify system or domain, not both"
 msgstr "Specify system or domain, not both"
 
@@ -1186,15 +1083,9 @@ msgstr "The account is locked for user: %(user_id)s."
 msgid "The action you have requested has not been implemented."
 msgstr "The action you have requested has not been implemented."
 
-msgid "The authenticated project should match the project_id"
-msgstr "The authenticated project should match the project_id"
-
 msgid "The authenticated user should match the trustor"
 msgstr "The authenticated user should match the trustor"
 
-msgid "The configured token provider does not support bind authentication."
-msgstr "The configured token provider does not support bind authentication."
-
 #, python-format
 msgid ""
 "The given operator %(_op)s is not valid. It must be one of the following: "
@@ -1202,14 +1093,6 @@ msgid ""
 msgstr ""
 "The given operator %(_op)s is not valid. It must be one of the following: "
 "'eq', 'neq', 'lt', 'lte', 'gt', or 'gte'."
-
-#, python-format
-msgid ""
-"The new password cannot be identical to a previous password. The total "
-"number whichincludes the new password must be unique is %(unique_count)s."
-msgstr ""
-"The new password cannot be identical to a previous password. The total "
-"number which includes the new password must be unique is %(unique_count)s."
 
 #, python-format
 msgid "The password does not match the requirements: %(detail)s."
@@ -1268,10 +1151,6 @@ msgstr ""
 msgid "This is not a recognized Fernet payload version: %s"
 msgstr "This is not a recognised Fernet payload version: %s"
 
-#, python-format
-msgid "This is not a recognized Fernet token %s"
-msgstr "This is not a recognised Fernet token %s"
-
 msgid ""
 "Timestamp not in expected format. The server could not comply with the "
 "request since it is either malformed or otherwise incorrect. The client is "
@@ -1280,12 +1159,6 @@ msgstr ""
 "Timestamp not in expected format. The server could not comply with the "
 "request since it is either malformed or otherwise incorrect. The client is "
 "assumed to be in error."
-
-msgid "Token belongs to another user"
-msgstr "Token belongs to another user"
-
-msgid "Token is absent"
-msgstr "Token is absent"
 
 msgid "Token version is unrecognizable or unsupported."
 msgstr "Token version is unrecognisable or unsupported."
@@ -1417,16 +1290,6 @@ msgstr ""
 "Unable to update or delete registered limit %(id)s because there are project "
 "limits associated with it."
 
-msgid ""
-"Unable to update the registered limits because there are project limits "
-"associated with it."
-msgstr ""
-"Unable to update the registered limits because there are project limits "
-"associated with it."
-
-msgid "Unable to validate Federation tokens using the version v2.0 API."
-msgstr "Unable to validate Federation tokens using the version v2.0 API."
-
 msgid "Unable to validate password due to invalid configuration"
 msgstr "Unable to validate password due to invalid configuration"
 
@@ -1458,13 +1321,6 @@ msgstr "Unexpected status requested for JSON Home response, %s"
 msgid "Unknown domain '%(name)s' specified by --domain-name"
 msgstr "Unknown domain '%(name)s' specified by --domain-name"
 
-msgid "Unknown parameters found, please provide only oauth parameters."
-msgstr "Unknown parameters found, please provide only oauth parameters."
-
-#, python-format
-msgid "Unregistered dependency: %(name)s for %(targets)s"
-msgstr "Unregistered dependency: %(name)s for %(targets)s"
-
 #, python-format
 msgid "Unsupported password hashing algorithm ident: %s"
 msgstr "Unsupported password hashing algorithm ident: %s"
@@ -1477,9 +1333,6 @@ msgstr "Update of `is_domain` is not allowed."
 
 msgid "Update of `parent_id` is not allowed."
 msgstr "Update of `parent_id` is not allowed."
-
-msgid "Use a project scoped token when attempting to create a SAML assertion"
-msgstr "Use a project scoped token when attempting to create a SAML assertion"
 
 #, python-format
 msgid "User %(user_id)s has no access to domain %(domain_id)s"
@@ -1517,12 +1370,6 @@ msgstr "User is disabled: %s"
 
 msgid "User is not a trustee."
 msgstr "User is not a trustee."
-
-msgid "User not found by auth plugin; authentication failed"
-msgstr "User not found by auth plugin; authentication failed"
-
-msgid "User not valid for tenant."
-msgstr "User not valid for tenant."
 
 #, python-format
 msgid "User type %s not supported"
@@ -1575,6 +1422,15 @@ msgstr "You are not authorised to perform the requested action."
 #, python-format
 msgid "You are not authorized to perform the requested action: %(action)s."
 msgstr "You are not authorised to perform the requested action: %(action)s."
+
+msgid ""
+"You cannot change your password at this time due to password policy "
+"disallowing password changes. Please contact your administrator to reset "
+"your password."
+msgstr ""
+"You cannot change your password at this time due to password policy "
+"disallowing password changes. Please contact your administrator to reset "
+"your password."
 
 #, python-format
 msgid ""
@@ -1646,8 +1502,8 @@ msgid "group %(group)s"
 msgstr "group %(group)s"
 
 #, python-format
-msgid "invalid date format %s"
-msgstr "invalid date format %s"
+msgid "invalidate date format %s"
+msgstr "invalidate date format %s"
 
 #, python-format
 msgid ""
@@ -1656,14 +1512,6 @@ msgid ""
 msgstr ""
 "it is not permitted to have two projects acting as domains with the same "
 "name: %s"
-
-#, python-format
-msgid ""
-"it is not permitted to have two projects with the same name in the same "
-"domain : %s"
-msgstr ""
-"it is not permitted to have two projects with the same name in the same "
-"domain : %s"
 
 msgid "only root projects are allowed to act as domains."
 msgstr "only root projects are allowed to act as domains."
@@ -1708,7 +1556,3 @@ msgstr "tls_cacertdir %s not found or is not a directory"
 #, python-format
 msgid "tls_cacertfile %s not found or is not a file"
 msgstr "tls_cacertfile %s not found or is not a file"
-
-#, python-format
-msgid "token reference must be a KeystoneToken type, got: %s"
-msgstr "token reference must be a KeystoneToken type, got: %s"

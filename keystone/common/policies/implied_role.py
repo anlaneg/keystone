@@ -10,14 +10,45 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+from oslo_log import versionutils
 from oslo_policy import policy
 
 from keystone.common.policies import base
 
+deprecated_get_implied_role = policy.DeprecatedRule(
+    name=base.IDENTITY % 'get_implied_role',
+    check_str=base.RULE_ADMIN_REQUIRED
+)
+deprecated_list_implied_roles = policy.DeprecatedRule(
+    name=base.IDENTITY % 'list_implied_roles',
+    check_str=base.RULE_ADMIN_REQUIRED,
+)
+deprecated_list_role_inference_rules = policy.DeprecatedRule(
+    name=base.IDENTITY % 'list_role_inference_rules',
+    check_str=base.RULE_ADMIN_REQUIRED,
+)
+deprecated_check_implied_role = policy.DeprecatedRule(
+    name=base.IDENTITY % 'check_implied_role',
+    check_str=base.RULE_ADMIN_REQUIRED,
+)
+deprecated_create_implied_role = policy.DeprecatedRule(
+    name=base.IDENTITY % 'create_implied_role',
+    check_str=base.RULE_ADMIN_REQUIRED,
+)
+deprecated_delete_implied_role = policy.DeprecatedRule(
+    name=base.IDENTITY % 'delete_implied_role',
+    check_str=base.RULE_ADMIN_REQUIRED,
+)
+
+DEPRECATED_REASON = (
+    "The implied role API is now aware of system scope and default roles."
+)
+
+
 implied_role_policies = [
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'get_implied_role',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_READER,
         # FIXME(lbragstad) The management of implied roles currently makes
         # sense as a system-only resource. Once keystone has the ability to
         # support RBAC solely over the API without having to customize policy
@@ -29,10 +60,13 @@ implied_role_policies = [
                     'the user also assumes the implied role.',
         operations=[
             {'path': '/v3/roles/{prior_role_id}/implies/{implied_role_id}',
-             'method': 'GET'}]),
+             'method': 'GET'}],
+        deprecated_rule=deprecated_get_implied_role,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.TRAIN),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'list_implied_roles',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_READER,
         scope_types=['system'],
         description='List associations between two roles. When a relationship '
                     'exists between a prior role and an implied role and the '
@@ -42,10 +76,13 @@ implied_role_policies = [
                     'prior role.',
         operations=[
             {'path': '/v3/roles/{prior_role_id}/implies', 'method': 'GET'},
-            {'path': '/v3/roles/{prior_role_id}/implies', 'method': 'HEAD'}]),
+            {'path': '/v3/roles/{prior_role_id}/implies', 'method': 'HEAD'}],
+        deprecated_rule=deprecated_list_implied_roles,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.TRAIN),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'create_implied_role',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_ADMIN,
         scope_types=['system'],
         description='Create an association between two roles. When a '
                     'relationship exists between a prior role and an implied '
@@ -53,10 +90,13 @@ implied_role_policies = [
                     'also assumes the implied role.',
         operations=[
             {'path': '/v3/roles/{prior_role_id}/implies/{implied_role_id}',
-             'method': 'PUT'}]),
+             'method': 'PUT'}],
+        deprecated_rule=deprecated_create_implied_role,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.TRAIN),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'delete_implied_role',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_ADMIN,
         scope_types=['system'],
         description='Delete the association between two roles. When a '
                     'relationship exists between a prior role and an implied '
@@ -65,10 +105,13 @@ implied_role_policies = [
                     'will cause that effect to be eliminated.',
         operations=[
             {'path': '/v3/roles/{prior_role_id}/implies/{implied_role_id}',
-             'method': 'DELETE'}]),
+             'method': 'DELETE'}],
+        deprecated_rule=deprecated_delete_implied_role,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.TRAIN),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'list_role_inference_rules',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_READER,
         scope_types=['system'],
         description='List all associations between two roles in the system. '
                     'When a relationship exists between a prior role and an '
@@ -76,10 +119,13 @@ implied_role_policies = [
                     'the user also assumes the implied role.',
         operations=[
             {'path': '/v3/role_inferences', 'method': 'GET'},
-            {'path': '/v3/role_inferences', 'method': 'HEAD'}]),
+            {'path': '/v3/role_inferences', 'method': 'HEAD'}],
+        deprecated_rule=deprecated_list_role_inference_rules,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.TRAIN),
     policy.DocumentedRuleDefault(
         name=base.IDENTITY % 'check_implied_role',
-        check_str=base.RULE_ADMIN_REQUIRED,
+        check_str=base.SYSTEM_READER,
         scope_types=['system'],
         description='Check an association between two roles. When a '
                     'relationship exists between a prior role and an implied '
@@ -87,7 +133,10 @@ implied_role_policies = [
                     'also assumes the implied role.',
         operations=[
             {'path': '/v3/roles/{prior_role_id}/implies/{implied_role_id}',
-             'method': 'HEAD'}])
+             'method': 'HEAD'}],
+        deprecated_rule=deprecated_check_implied_role,
+        deprecated_reason=DEPRECATED_REASON,
+        deprecated_since=versionutils.deprecated.TRAIN),
 ]
 
 

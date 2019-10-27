@@ -21,14 +21,13 @@ from six.moves import http_client
 from testtools import matchers
 import webtest
 
-from keystone import auth
 from keystone.common import authorization
 from keystone.common import cache
 from keystone.common import provider_api
 from keystone.common.validation import validators
 from keystone import exception
-from keystone import middleware
 from keystone.resource.backends import base as resource_base
+from keystone.server.flask.request_processing.middleware import auth_context
 from keystone.tests.common import auth as common_auth
 from keystone.tests import unit
 from keystone.tests.unit import rest
@@ -46,6 +45,22 @@ class RestfulTestCase(unit.SQLDriverOverrides, rest.RestfulTestCase,
     def generate_token_schema(self, system_scoped=False, domain_scoped=False,
                               project_scoped=False):
         """Return a dictionary of token properties to validate against."""
+        ROLES_SCHEMA = {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'id': {'type': 'string', },
+                    'name': {'type': 'string', },
+                    'description': {'type': 'string', },
+                    'options': {'type': 'object', }
+                },
+                'required': ['id', 'name', ],
+                'additionalProperties': False,
+            },
+            'minItems': 1,
+        }
+
         properties = {
             'audit_ids': {
                 'type': 'array',
@@ -54,16 +69,6 @@ class RestfulTestCase(unit.SQLDriverOverrides, rest.RestfulTestCase,
                 },
                 'minItems': 1,
                 'maxItems': 2,
-            },
-            'bind': {
-                'type': 'object',
-                'properties': {
-                    'kerberos': {
-                        'type': 'string',
-                    },
-                },
-                'required': ['kerberos'],
-                'additionalProperties': False,
             },
             'expires_at': {
                 'type': 'string',
@@ -111,34 +116,10 @@ class RestfulTestCase(unit.SQLDriverOverrides, rest.RestfulTestCase,
                     'all': {'type': 'boolean'}
                 }
             }
-            properties['roles'] = {
-                'type': 'array',
-                'items': {
-                    'type': 'object',
-                    'properties': {
-                        'id': {'type': 'string', },
-                        'name': {'type': 'string', },
-                    },
-                    'required': ['id', 'name', ],
-                    'additionalProperties': False,
-                },
-                'minItems': 1,
-            }
+            properties['roles'] = ROLES_SCHEMA
         elif domain_scoped:
             properties['catalog'] = {'type': 'array'}
-            properties['roles'] = {
-                'type': 'array',
-                'items': {
-                    'type': 'object',
-                    'properties': {
-                        'id': {'type': 'string', },
-                        'name': {'type': 'string', },
-                    },
-                    'required': ['id', 'name', ],
-                    'additionalProperties': False,
-                },
-                'minItems': 1,
-            }
+            properties['roles'] = ROLES_SCHEMA
             properties['domain'] = {
                 'type': 'object',
                 'required': ['id', 'name'],
@@ -151,7 +132,12 @@ class RestfulTestCase(unit.SQLDriverOverrides, rest.RestfulTestCase,
         elif project_scoped:
             properties['is_admin_project'] = {'type': 'boolean'}
             properties['catalog'] = {'type': 'array'}
-            properties['roles'] = {'type': 'array'}
+            # FIXME(lbragstad): Remove this in favor of the predefined
+            # ROLES_SCHEMA dictionary once bug 1763510 is fixed.
+            ROLES_SCHEMA['items']['properties']['domain_id'] = {
+                'type': ['null', 'string', ],
+            }
+            properties['roles'] = ROLES_SCHEMA
             properties['is_domain'] = {'type': 'boolean'}
             properties['project'] = {
                 'type': ['object'],
@@ -177,7 +163,7 @@ class RestfulTestCase(unit.SQLDriverOverrides, rest.RestfulTestCase,
             'properties': properties,
             'required': ['audit_ids', 'expires_at', 'issued_at', 'methods',
                          'user'],
-            'optional': ['bind'],
+            'optional': [],
             'additionalProperties': False
         }
 
@@ -201,11 +187,9 @@ class RestfulTestCase(unit.SQLDriverOverrides, rest.RestfulTestCase,
         config_files.append(unit.dirs.tests_conf('backend_sql.conf'))
         return config_files
 
-    def setUp(self, app_conf='keystone', enable_sqlite_foreign_key=False):
+    def setUp(self):
         """Setup for v3 Restful Test Cases."""
-        super(RestfulTestCase, self).setUp(
-            app_conf=app_conf,
-            enable_sqlite_foreign_key=enable_sqlite_foreign_key)
+        super(RestfulTestCase, self).setUp()
 
         self.empty_context = {'environment': {}}
 
@@ -215,37 +199,27 @@ class RestfulTestCase(unit.SQLDriverOverrides, rest.RestfulTestCase,
 
         super(RestfulTestCase, self).load_backends()
 
-    def load_fixtures(self, fixtures, enable_sqlite_foreign_key=False):
-        self.load_sample_data(
-            enable_sqlite_foreign_key=enable_sqlite_foreign_key)
+    def load_fixtures(self, fixtures):
+        self.load_sample_data()
 
-    def _populate_default_domain(self, enable_sqlite_foreign_key=False):
+    def _populate_default_domain(self):
         try:
             PROVIDERS.resource_api.get_domain(DEFAULT_DOMAIN_ID)
         except exception.DomainNotFound:
-            # TODO(wxy): when FK is enabled in sqlite, a lot of tests will fail
-            # due to the root domain is missing. So we should open FKs for the
-            # tests one by one. If the FKs is enabled for one test,
-            # `enable_sqlite_foreign_key` should be `true` here to ensure the
-            # root domain is created. Once all tests enable FKs, the
-            # ``enable_sqlite_foreign_key`` can be removed.
-            if enable_sqlite_foreign_key:
-                root_domain = unit.new_domain_ref(
-                    id=resource_base.NULL_DOMAIN_ID,
-                    name=resource_base.NULL_DOMAIN_ID
-                )
-                self.resource_api.create_domain(resource_base.NULL_DOMAIN_ID,
-                                                root_domain)
+            root_domain = unit.new_domain_ref(
+                id=resource_base.NULL_DOMAIN_ID,
+                name=resource_base.NULL_DOMAIN_ID
+            )
+            PROVIDERS.resource_api.create_domain(resource_base.NULL_DOMAIN_ID,
+                                                 root_domain)
             domain = unit.new_domain_ref(
                 description=(u'The default domain'),
                 id=DEFAULT_DOMAIN_ID,
                 name=u'Default')
             PROVIDERS.resource_api.create_domain(DEFAULT_DOMAIN_ID, domain)
 
-    def load_sample_data(self, create_region_and_endpoints=True,
-                         enable_sqlite_foreign_key=False):
-        self._populate_default_domain(
-            enable_sqlite_foreign_key=enable_sqlite_foreign_key)
+    def load_sample_data(self, create_region_and_endpoints=True):
+        self._populate_default_domain()
         self.domain = unit.new_domain_ref()
         self.domain_id = self.domain['id']
         PROVIDERS.resource_api.create_domain(self.domain_id, self.domain)
@@ -404,6 +378,32 @@ class RestfulTestCase(unit.SQLDriverOverrides, rest.RestfulTestCase,
                         'project': {
                             'id': self.project['id'],
                         }
+                    }
+                }
+            })
+        return r.headers.get('X-Subject-Token')
+
+    def get_system_scoped_token(self):
+        """Convenience method for requesting system scoped tokens."""
+        r = self.admin_request(
+            method='POST',
+            path='/v3/auth/tokens',
+            body={
+                'auth': {
+                    'identity': {
+                        'methods': ['password'],
+                        'password': {
+                            'user': {
+                                'name': self.user['name'],
+                                'password': self.user['password'],
+                                'domain': {
+                                    'id': self.user['domain_id']
+                                }
+                            }
+                        }
+                    },
+                    'scope': {
+                        'system': {'all': True}
                     }
                 }
             })
@@ -746,31 +746,6 @@ class RestfulTestCase(unit.SQLDriverOverrides, rest.RestfulTestCase,
 
         return token
 
-    def assertEqualTokens(self, a, b):
-        """Assert that two tokens are equal.
-
-        Compare two tokens except for their ids. This also truncates
-        the time in the comparison.
-        """
-        def normalize(token):
-            del token['token']['expires_at']
-            del token['token']['issued_at']
-            return token
-
-        a_expires_at = self.assertValidISO8601ExtendedFormatDatetime(
-            a['token']['expires_at'])
-        b_expires_at = self.assertValidISO8601ExtendedFormatDatetime(
-            b['token']['expires_at'])
-        self.assertCloseEnoughForGovernmentWork(a_expires_at, b_expires_at)
-
-        a_issued_at = self.assertValidISO8601ExtendedFormatDatetime(
-            a['token']['issued_at'])
-        b_issued_at = self.assertValidISO8601ExtendedFormatDatetime(
-            b['token']['issued_at'])
-        self.assertCloseEnoughForGovernmentWork(a_issued_at, b_issued_at)
-
-        return self.assertDictEqual(normalize(a), normalize(b))
-
     # catalog validation
 
     def assertValidCatalogResponse(self, resp, *args, **kwargs):
@@ -962,8 +937,8 @@ class RestfulTestCase(unit.SQLDriverOverrides, rest.RestfulTestCase,
     def assertValidUser(self, entity, ref=None):
         self.assertIsNotNone(entity.get('domain_id'))
         self.assertIsNotNone(entity.get('email'))
-        self.assertIsNone(entity.get('password'))
-        self.assertNotIn('tenantId', entity)
+        self.assertNotIn('password', entity)
+        self.assertNotIn('projectId', entity)
         self.assertIn('password_expires_at', entity)
         if ref:
             self.assertEqual(ref['domain_id'], entity['domain_id'])
@@ -1100,7 +1075,7 @@ class RestfulTestCase(unit.SQLDriverOverrides, rest.RestfulTestCase,
 
         # Only one of user or group should be present
         if entity.get('user'):
-            self.assertIsNone(entity.get('group'))
+            self.assertNotIn('group', entity)
             self.assertIsNotNone(entity['user'].get('id'))
         else:
             self.assertIsNotNone(entity.get('group'))
@@ -1110,7 +1085,7 @@ class RestfulTestCase(unit.SQLDriverOverrides, rest.RestfulTestCase,
         self.assertIsNotNone(entity.get('scope'))
 
         if entity['scope'].get('project'):
-            self.assertIsNone(entity['scope'].get('domain'))
+            self.assertNotIn('domain', entity['scope'])
             self.assertIsNotNone(entity['scope']['project'].get('id'))
         elif entity['scope'].get('domain'):
             self.assertIsNotNone(entity['scope'].get('domain'))
@@ -1223,6 +1198,8 @@ class RestfulTestCase(unit.SQLDriverOverrides, rest.RestfulTestCase,
                 self.assertValidRole(role)
 
             self.assertValidListLinks(entity.get('roles_links'))
+            # Mirror the test tempest does to ensure the self-link is correct
+            self.assertIn('v3/OS-TRUST/trusts', entity.get('links')['self'])
 
             # always disallow role xor project_id (neither or both is allowed)
             has_roles = bool(entity.get('roles'))
@@ -1254,30 +1231,11 @@ class RestfulTestCase(unit.SQLDriverOverrides, rest.RestfulTestCase,
         for attribute in attributes:
             self.assertIsNotNone(entity.get(attribute))
 
-    def assertValidServiceProviderListResponse(self, resp, *args, **kwargs):
-        if kwargs.get('keys_to_check') is None:
-            kwargs['keys_to_check'] = ['auth_url', 'id', 'enabled',
-                                       'description', 'relay_state_prefix',
-                                       'sp_url']
-        return self.assertValidListResponse(
-            resp,
-            'service_providers',
-            self.assertValidServiceProvider,
-            *args,
-            **kwargs)
-
-    def build_external_auth_request(self, remote_user,
-                                    remote_domain=None, auth_data=None,
-                                    kerberos=False):
+    def build_external_auth_environ(self, remote_user, remote_domain=None):
         environment = {'REMOTE_USER': remote_user, 'AUTH_TYPE': 'Negotiate'}
         if remote_domain:
             environment['REMOTE_DOMAIN'] = remote_domain
-        if not auth_data:
-            auth_data = self.build_authentication_request(
-                kerberos=kerberos)['auth']
-        auth_info = auth.core.AuthInfo.create(auth_data)
-        auth_context = auth.core.AuthContext(extras={}, method_names=[])
-        return self.make_request(environ=environment), auth_info, auth_context
+        return environment
 
 
 class VersionTestCase(RestfulTestCase):
@@ -1298,7 +1256,7 @@ class AuthContextMiddlewareTestCase(RestfulTestCase):
             start_response('200 OK', headers)
             return [body]
 
-        app = webtest.TestApp(middleware.AuthContextMiddleware(application),
+        app = webtest.TestApp(auth_context.AuthContextMiddleware(application),
                               extra_environ=extra_environ)
         resp = app.get('/', headers={authorization.AUTH_TOKEN_HEADER: token})
         self.assertEqual(b'body', resp.body)  # just to make sure it worked

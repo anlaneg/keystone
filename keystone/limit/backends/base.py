@@ -15,14 +15,12 @@
 
 import abc
 
-from oslo_log import log
 import six
 
 import keystone.conf
 from keystone import exception
 
 
-LOG = log.getLogger(__name__)
 CONF = keystone.conf.CONF
 
 
@@ -39,7 +37,7 @@ class UnifiedLimitDriverBase(object):
         :param registered_limits: a list of dictionaries representing limits to
                                   create.
 
-        :returns: all the registered limits.
+        :returns: all the newly created registered limits.
         :raises keystone.exception.Conflict: If a duplicate registered limit
             exists.
 
@@ -47,13 +45,13 @@ class UnifiedLimitDriverBase(object):
         raise exception.NotImplemented()  # pragma: no cover
 
     @abc.abstractmethod
-    def update_registered_limits(self, registered_limits):
+    def update_registered_limit(self, registered_limit_id, registered_limit):
         """Update existing registered limits.
 
-        :param registered_limits: a list of dictionaries representing limits to
-                                  update.
-
-        :returns: all the registered limits.
+        :param registered_limit_id: the id of the registered limit.
+        :param registered_limit: a dict containing the registered limit
+                                 attributes to update.
+        :returns: the updated registered limit.
         :raises keystone.exception.RegisteredLimitNotFound: If registered limit
             doesn't exist.
         :raises keystone.exception.Conflict: If update to a duplicate
@@ -106,7 +104,7 @@ class UnifiedLimitDriverBase(object):
 
         :param limits: a list of dictionaries representing limits to create.
 
-        :returns: all the limits.
+        :returns: all the newly created limits.
         :raises keystone.exception.Conflict: If a duplicate limit exists.
         :raises keystone.exception.NoLimitReference: If no reference registered
             limit exists.
@@ -115,12 +113,13 @@ class UnifiedLimitDriverBase(object):
         raise exception.NotImplemented()  # pragma: no cover
 
     @abc.abstractmethod
-    def update_limits(self, limits):
+    def update_limit(self, limit_id, limit):
         """Update existing limits.
 
-        :param limits: a list of dictionaries representing limits to update.
+        :param limit_id: the id of the limit.
+        :param limit: a dict containing the limit attributes to update.
 
-        :returns: all the limits.
+        :returns: the updated limit.
         :raises keystone.exception.LimitNotFound: If limit doesn't
             exist.
         :raises keystone.exception.Conflict: If update to a duplicate limit.
@@ -162,6 +161,18 @@ class UnifiedLimitDriverBase(object):
 
         :raises keystone.exception.LimitNotFound: If limit doesn't
             exist.
+
+        """
+        raise exception.NotImplemented()  # pragma: no cover
+
+    @abc.abstractmethod
+    def delete_limits_for_project(self, project_id):
+        """Delete the existing limits which belong to the specified project.
+
+        :param project_id: the limits' project id.
+
+        :returns: a dictionary representing the deleted limits id. Used for
+            cache invalidating.
 
         """
         raise exception.NotImplemented()  # pragma: no cover

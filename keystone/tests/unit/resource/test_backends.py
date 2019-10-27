@@ -19,8 +19,10 @@ from testtools import matchers
 
 from keystone.common import driver_hints
 from keystone.common import provider_api
+from keystone.common.resource_options import options as ro_opt
 import keystone.conf
 from keystone import exception
+from keystone.resource.backends import sql as resource_sql
 from keystone.tests import unit
 from keystone.tests.unit import default_fixtures
 from keystone.tests.unit import utils as test_utils
@@ -35,8 +37,9 @@ class ResourceTests(object):
     domain_count = len(default_fixtures.DOMAINS)
 
     def test_get_project(self):
-        tenant_ref = PROVIDERS.resource_api.get_project(self.tenant_bar['id'])
-        self.assertDictEqual(self.tenant_bar, tenant_ref)
+        project_ref = PROVIDERS.resource_api.get_project(
+            self.project_bar['id'])
+        self.assertDictEqual(self.project_bar, project_ref)
 
     def test_get_project_returns_not_found(self):
         self.assertRaises(exception.ProjectNotFound,
@@ -44,10 +47,10 @@ class ResourceTests(object):
                           uuid.uuid4().hex)
 
     def test_get_project_by_name(self):
-        tenant_ref = PROVIDERS.resource_api.get_project_by_name(
-            self.tenant_bar['name'],
+        project_ref = PROVIDERS.resource_api.get_project_by_name(
+            self.project_bar['name'],
             CONF.identity.default_domain_id)
-        self.assertDictEqual(self.tenant_bar, tenant_ref)
+        self.assertDictEqual(self.project_bar, project_ref)
 
     @unit.skip_if_no_multiple_domains_support
     def test_get_project_by_name_for_project_acting_as_a_domain(self):
@@ -205,42 +208,6 @@ class ResourceTests(object):
                           project['id'],
                           project)
 
-    def test_update_project_blank_name_fails(self):
-        project = unit.new_project_ref(
-            name='fake1', domain_id=CONF.identity.default_domain_id)
-        PROVIDERS.resource_api.create_project(project['id'], project)
-        project['name'] = ''
-        self.assertRaises(exception.ValidationError,
-                          PROVIDERS.resource_api.update_project,
-                          project['id'],
-                          project)
-
-    def test_update_project_long_name_fails(self):
-        project = unit.new_project_ref(
-            name='fake1', domain_id=CONF.identity.default_domain_id)
-        PROVIDERS.resource_api.create_project(project['id'], project)
-        project['name'] = 'a' * 65
-        self.assertRaises(exception.ValidationError,
-                          PROVIDERS.resource_api.update_project,
-                          project['id'],
-                          project)
-
-    def test_update_project_invalid_name_fails(self):
-        project = unit.new_project_ref(
-            name='fake1', domain_id=CONF.identity.default_domain_id)
-        PROVIDERS.resource_api.create_project(project['id'], project)
-        project['name'] = None
-        self.assertRaises(exception.ValidationError,
-                          PROVIDERS.resource_api.update_project,
-                          project['id'],
-                          project)
-
-        project['name'] = 123
-        self.assertRaises(exception.ValidationError,
-                          PROVIDERS.resource_api.update_project,
-                          project['id'],
-                          project)
-
     def test_create_project_invalid_domain_id(self):
         project = unit.new_project_ref(domain_id=uuid.uuid4().hex)
         self.assertRaises(exception.DomainNotFound,
@@ -264,9 +231,9 @@ class ResourceTests(object):
 
     def test_list_projects(self):
         project_refs = PROVIDERS.resource_api.list_projects()
-        project_count = len(default_fixtures.TENANTS) + self.domain_count
+        project_count = len(default_fixtures.PROJECTS) + self.domain_count
         self.assertEqual(project_count, len(project_refs))
-        for project in default_fixtures.TENANTS:
+        for project in default_fixtures.PROJECTS:
             self.assertIn(project, project_refs)
 
     def test_list_projects_with_multiple_filters(self):
@@ -304,11 +271,11 @@ class ResourceTests(object):
         # filtering by domain does not include any project that acts as a
         # domain.
         self.assertThat(
-            project_ids, matchers.HasLength(len(default_fixtures.TENANTS)))
-        self.assertIn(self.tenant_bar['id'], project_ids)
-        self.assertIn(self.tenant_baz['id'], project_ids)
-        self.assertIn(self.tenant_mtu['id'], project_ids)
-        self.assertIn(self.tenant_service['id'], project_ids)
+            project_ids, matchers.HasLength(len(default_fixtures.PROJECTS)))
+        self.assertIn(self.project_bar['id'], project_ids)
+        self.assertIn(self.project_baz['id'], project_ids)
+        self.assertIn(self.project_mtu['id'], project_ids)
+        self.assertIn(self.project_service['id'], project_ids)
 
     @unit.skip_if_no_multiple_domains_support
     def test_list_projects_acting_as_domain(self):
@@ -1295,6 +1262,23 @@ class ResourceTests(object):
                           domain['id'])
 
     @unit.skip_if_no_multiple_domains_support
+    def test_delete_domain_call_db_time(self):
+        domain = unit.new_domain_ref()
+        PROVIDERS.resource_api.create_domain(domain['id'], domain)
+        # Disable the domain
+        domain['enabled'] = False
+        PROVIDERS.resource_api.update_domain(domain['id'], domain)
+
+        domain_ref = PROVIDERS.resource_api.get_project(domain['id'])
+        with mock.patch.object(resource_sql.Resource,
+                               "get_project") as mock_get_project:
+
+            mock_get_project.return_value = domain_ref
+            # Delete the domain
+            PROVIDERS.resource_api.delete_domain(domain['id'])
+            self.assertEqual(mock_get_project.call_count, 1)
+
+    @unit.skip_if_no_multiple_domains_support
     def test_domain_name_case_sensitivity(self):
         # create a ref with a lowercase name
         domain_name = 'test_domain'
@@ -1700,6 +1684,336 @@ class ResourceTests(object):
         )
         self.assertEqual(project_tag_ref, [])
 
+    def test_create_project_immutable(self):
+        project = unit.new_project_ref(
+            domain_id=CONF.identity.default_domain_id)
+        project['options'][ro_opt.IMMUTABLE_OPT.option_name] = True
+
+        p_created = PROVIDERS.resource_api.create_project(
+            project['id'], project)
+        project_via_manager = PROVIDERS.resource_api.get_project(project['id'])
+        self.assertTrue('options' in p_created)
+        self.assertTrue('options' in project_via_manager)
+        self.assertTrue(
+            project_via_manager['options'][ro_opt.IMMUTABLE_OPT.option_name])
+        self.assertTrue(
+            p_created['options'][ro_opt.IMMUTABLE_OPT.option_name])
+
+    def test_cannot_update_immutable_project(self):
+        project = unit.new_project_ref(
+            domain_id=CONF.identity.default_domain_id)
+        project['options'][ro_opt.IMMUTABLE_OPT.option_name] = True
+        PROVIDERS.resource_api.create_project(project['id'], project)
+
+        update_project = {'name': uuid.uuid4().hex}
+        self.assertRaises(exception.ResourceUpdateForbidden,
+                          PROVIDERS.resource_api.update_project,
+                          project['id'],
+                          update_project)
+
+    def test_cannot_update_immutable_project_while_unsetting_immutable(self):
+        project = unit.new_project_ref(
+            domain_id=CONF.identity.default_domain_id)
+        project['options'][ro_opt.IMMUTABLE_OPT.option_name] = True
+        PROVIDERS.resource_api.create_project(project['id'], project)
+
+        update_project = {
+            'name': uuid.uuid4().hex,
+            'options': {
+                ro_opt.IMMUTABLE_OPT.option_name: True
+            }}
+        self.assertRaises(exception.ResourceUpdateForbidden,
+                          PROVIDERS.resource_api.update_project,
+                          project['id'],
+                          update_project)
+
+    def test_cannot_delete_immutable_project(self):
+        project = unit.new_project_ref(
+            domain_id=CONF.identity.default_domain_id)
+        project['options'][ro_opt.IMMUTABLE_OPT.option_name] = True
+        PROVIDERS.resource_api.create_project(project['id'], project)
+        self.assertRaises(exception.ResourceDeleteForbidden,
+                          PROVIDERS.resource_api.delete_project,
+                          project['id'])
+
+    def test_update_project_set_immutable(self):
+        project = unit.new_project_ref(
+            domain_id=CONF.identity.default_domain_id)
+        PROVIDERS.resource_api.create_project(project['id'], project)
+        update_project = {
+            'options': {
+                ro_opt.IMMUTABLE_OPT.option_name: True
+            }}
+        project_via_manager = PROVIDERS.resource_api.get_project(project['id'])
+        self.assertTrue('options' in project_via_manager)
+        self.assertFalse(
+            ro_opt.IMMUTABLE_OPT.option_name in project_via_manager['options'])
+        p_update = PROVIDERS.resource_api.update_project(
+            project['id'], update_project)
+        project_via_manager = PROVIDERS.resource_api.get_project(project['id'])
+        self.assertTrue(
+            ro_opt.IMMUTABLE_OPT.option_name in p_update['options'])
+        self.assertTrue(
+            p_update['options'][ro_opt.IMMUTABLE_OPT.option_name])
+        self.assertTrue(
+            ro_opt.IMMUTABLE_OPT.option_name in project_via_manager['options'])
+        self.assertTrue(
+            project_via_manager['options'][ro_opt.IMMUTABLE_OPT.option_name])
+
+    def test_update_project_set_immutable_with_additional_updates(self):
+        project = unit.new_project_ref(
+            domain_id=CONF.identity.default_domain_id)
+        PROVIDERS.resource_api.create_project(project['id'], project)
+        update_project = {
+            'name': uuid.uuid4().hex,
+            'options': {
+                ro_opt.IMMUTABLE_OPT.option_name: True
+            }}
+        project_via_manager = PROVIDERS.resource_api.get_project(project['id'])
+        self.assertTrue('options' in project_via_manager)
+        self.assertFalse(
+            ro_opt.IMMUTABLE_OPT.option_name in project_via_manager['options'])
+        p_update = PROVIDERS.resource_api.update_project(
+            project['id'], update_project)
+        project_via_manager = PROVIDERS.resource_api.get_project(project['id'])
+        self.assertEqual(p_update['name'], update_project['name'])
+        self.assertEqual(project_via_manager['name'], update_project['name'])
+        self.assertTrue(
+            ro_opt.IMMUTABLE_OPT.option_name in p_update['options'])
+        self.assertTrue(
+            p_update['options'][ro_opt.IMMUTABLE_OPT.option_name])
+        self.assertTrue(
+            ro_opt.IMMUTABLE_OPT.option_name in project_via_manager['options'])
+        self.assertTrue(
+            project_via_manager['options'][ro_opt.IMMUTABLE_OPT.option_name])
+
+    def test_update_project_unset_immutable(self):
+        project = unit.new_project_ref(
+            domain_id=CONF.identity.default_domain_id)
+        project['options'][ro_opt.IMMUTABLE_OPT.option_name] = True
+        PROVIDERS.resource_api.create_project(project['id'], project)
+        project_via_manager = PROVIDERS.resource_api.get_project(project['id'])
+        self.assertTrue('options' in project_via_manager)
+        self.assertTrue(
+            project_via_manager['options'][ro_opt.IMMUTABLE_OPT.option_name])
+
+        update_project = {
+            'options': {
+                ro_opt.IMMUTABLE_OPT.option_name: False
+            }}
+        PROVIDERS.resource_api.update_project(project['id'], update_project)
+        project_via_manager = PROVIDERS.resource_api.get_project(project['id'])
+        self.assertTrue('options' in project_via_manager)
+        self.assertTrue(
+            ro_opt.IMMUTABLE_OPT.option_name in project_via_manager['options'])
+        self.assertFalse(
+            project_via_manager['options'][ro_opt.IMMUTABLE_OPT.option_name])
+
+        update_project = {'name': uuid.uuid4().hex}
+        p_updated = PROVIDERS.resource_api.update_project(
+            project['id'], update_project)
+        self.assertEqual(p_updated['name'], update_project['name'])
+
+        update_project = {
+            'options': {
+                ro_opt.IMMUTABLE_OPT.option_name: None
+            }}
+        p_updated = PROVIDERS.resource_api.update_project(
+            project['id'], update_project)
+        project_via_manager = PROVIDERS.resource_api.get_project(project['id'])
+        self.assertTrue('options' in p_updated)
+        self.assertTrue('options' in project_via_manager)
+        self.assertFalse(
+            ro_opt.IMMUTABLE_OPT.option_name in p_updated['options'])
+        self.assertFalse(
+            ro_opt.IMMUTABLE_OPT.option_name in project_via_manager['options'])
+
+    def test_cannot_delete_project_tags_immutable_project(self):
+        project, tags = self._create_project_and_tags(num_of_tags=2)
+        update_project = {
+            'options': {
+                ro_opt.IMMUTABLE_OPT.option_name: True
+            }
+        }
+        PROVIDERS.resource_api.update_project(project['id'], update_project)
+        self.assertRaises(exception.ResourceUpdateForbidden,
+                          PROVIDERS.resource_api.delete_project_tag,
+                          project['id'],
+                          tags[0])
+
+    def test_cannot_update_project_tags_immutable_project(self):
+        # Update and Add tag use the same API
+        project, tags = self._create_project_and_tags(num_of_tags=2)
+        update_project = {
+            'options': {
+                ro_opt.IMMUTABLE_OPT.option_name: True
+            }
+        }
+        PROVIDERS.resource_api.update_project(project['id'], update_project)
+        tags.append(uuid.uuid4().hex)
+        self.assertRaises(exception.ResourceUpdateForbidden,
+                          PROVIDERS.resource_api.update_project_tags,
+                          project['id'],
+                          tags)
+
+    @unit.skip_if_no_multiple_domains_support
+    def test_create_domain_immutable(self):
+        domain_id = uuid.uuid4().hex
+
+        domain = {
+            'name': uuid.uuid4().hex,
+            'id': domain_id,
+            'is_domain': True,
+            'options': {'immutable': True}
+        }
+
+        PROVIDERS.resource_api.create_domain(domain_id, domain)
+        domain_via_manager = PROVIDERS.resource_api.get_domain(domain_id)
+        self.assertTrue('options' in domain_via_manager)
+        self.assertTrue(domain_via_manager['options']['immutable'])
+
+    @unit.skip_if_no_multiple_domains_support
+    def test_cannot_update_immutable_domain(self):
+        domain_id = uuid.uuid4().hex
+
+        domain = {
+            'name': uuid.uuid4().hex,
+            'id': domain_id,
+            'is_domain': True,
+            'options': {'immutable': True}
+        }
+
+        PROVIDERS.resource_api.create_domain(domain_id, domain)
+        update_domain = {'name': uuid.uuid4().hex}
+        self.assertRaises(exception.ResourceUpdateForbidden,
+                          PROVIDERS.resource_api.update_domain,
+                          domain_id,
+                          update_domain)
+
+    @unit.skip_if_no_multiple_domains_support
+    def test_cannot_delete_immutable_domain(self):
+        domain_id = uuid.uuid4().hex
+
+        domain = {
+            'name': uuid.uuid4().hex,
+            'id': domain_id,
+            'is_domain': True,
+            'options': {'immutable': True}
+        }
+
+        PROVIDERS.resource_api.create_domain(domain_id, domain)
+        self.assertRaises(exception.ResourceDeleteForbidden,
+                          PROVIDERS.resource_api.delete_domain,
+                          domain_id,)
+
+    @unit.skip_if_no_multiple_domains_support
+    def test_cannot_delete_disabled_domain_with_immutable_project(self):
+        domain_id = uuid.uuid4().hex
+
+        domain = {
+            'name': uuid.uuid4().hex,
+            'id': domain_id,
+            'is_domain': True,
+        }
+
+        PROVIDERS.resource_api.create_domain(domain_id, domain)
+        project = unit.new_project_ref(domain_id)
+        project['options'][ro_opt.IMMUTABLE_OPT.option_name] = True
+        PROVIDERS.resource_api.create_project(project['id'], project)
+        # Disable the domain
+        PROVIDERS.resource_api.update_domain(domain_id, {'enabled': False})
+        # attempt to delete the domain, should error when the immutable
+        # project is reached
+        self.assertRaises(exception.ResourceDeleteForbidden,
+                          PROVIDERS.resource_api.delete_domain,
+                          domain_id)
+
+    @unit.skip_if_no_multiple_domains_support
+    def test_update_domain_set_immutable(self):
+        # domains are projects, this should be the same as the project version
+        domain_id = uuid.uuid4().hex
+
+        domain = {
+            'name': uuid.uuid4().hex,
+            'id': domain_id,
+            'is_domain': True,
+        }
+
+        PROVIDERS.resource_api.create_domain(domain_id, domain)
+        domain_via_manager = PROVIDERS.resource_api.get_domain(domain_id)
+        self.assertTrue('options' in domain_via_manager)
+        self.assertFalse(
+            ro_opt.IMMUTABLE_OPT.option_name in domain_via_manager['options'])
+
+        domain_update = {
+            'options': {
+                ro_opt.IMMUTABLE_OPT.option_name: True
+            }}
+        d_update = PROVIDERS.resource_api.update_domain(
+            domain_id, domain_update)
+        domain_via_manager = PROVIDERS.resource_api.get_domain(domain_id)
+        self.assertTrue(
+            ro_opt.IMMUTABLE_OPT.option_name in d_update['options'])
+        self.assertTrue(
+            d_update['options'][ro_opt.IMMUTABLE_OPT.option_name])
+        self.assertTrue(
+            ro_opt.IMMUTABLE_OPT.option_name in domain_via_manager['options'])
+        self.assertTrue(
+            domain_via_manager['options'][ro_opt.IMMUTABLE_OPT.option_name])
+
+    def test_update_domain_unset_immutable(self):
+        # domains are projects, this should be the same as the project version
+        domain_id = uuid.uuid4().hex
+
+        domain = {
+            'name': uuid.uuid4().hex,
+            'id': domain_id,
+            'is_domain': True,
+        }
+
+        PROVIDERS.resource_api.create_domain(domain_id, domain)
+        domain_via_manager = PROVIDERS.resource_api.get_domain(domain_id)
+        self.assertTrue('options' in domain_via_manager)
+        self.assertFalse(
+            ro_opt.IMMUTABLE_OPT.option_name in domain_via_manager['options'])
+
+        update_domain = {
+            'options': {
+                ro_opt.IMMUTABLE_OPT.option_name: False
+            }}
+        d_updated = PROVIDERS.resource_api.update_domain(
+            domain_id, update_domain)
+        domain_via_manager = PROVIDERS.resource_api.get_domain(domain_id)
+        self.assertTrue('options' in domain_via_manager)
+        self.assertTrue('options' in d_updated)
+        self.assertTrue(
+            ro_opt.IMMUTABLE_OPT.option_name in domain_via_manager['options'])
+        self.assertTrue(
+            ro_opt.IMMUTABLE_OPT.option_name in d_updated['options'])
+        self.assertFalse(
+            d_updated['options'][ro_opt.IMMUTABLE_OPT.option_name])
+        self.assertFalse(
+            domain_via_manager['options'][ro_opt.IMMUTABLE_OPT.option_name])
+
+        update_domain = {'name': uuid.uuid4().hex}
+        d_updated = PROVIDERS.resource_api.update_domain(
+            domain_id, update_domain)
+        self.assertEqual(d_updated['name'], update_domain['name'])
+
+        update_domain = {
+            'options': {
+                ro_opt.IMMUTABLE_OPT.option_name: None
+            }}
+        d_updated = PROVIDERS.resource_api.update_domain(
+            domain_id, update_domain)
+        domain_via_manager = PROVIDERS.resource_api.get_domain(domain_id)
+        self.assertTrue('options' in d_updated)
+        self.assertTrue('options' in domain_via_manager)
+        self.assertFalse(
+            ro_opt.IMMUTABLE_OPT.option_name in d_updated['options'])
+        self.assertFalse(
+            ro_opt.IMMUTABLE_OPT.option_name in domain_via_manager['options'])
+
 
 class ResourceDriverTests(object):
     """Test for the resource driver.
@@ -1713,7 +2027,7 @@ class ResourceDriverTests(object):
         project = {
             'name': uuid.uuid4().hex,
             'id': project_id,
-            'domain_id': uuid.uuid4().hex,
+            'domain_id': default_fixtures.ROOT_DOMAIN['id'],
         }
         self.driver.create_project(project_id, project)
 
@@ -1722,10 +2036,18 @@ class ResourceDriverTests(object):
         project = {
             'name': uuid.uuid4().hex,
             'id': project_id,
-            'domain_id': uuid.uuid4().hex,
+            'domain_id': default_fixtures.ROOT_DOMAIN['id'],
+        }
+        parent_project = self.driver.create_project(project_id, project)
+
+        project_id = uuid.uuid4().hex
+        project = {
+            'name': uuid.uuid4().hex,
+            'id': project_id,
+            'domain_id': default_fixtures.ROOT_DOMAIN['id'],
             'description': uuid.uuid4().hex,
             'enabled': True,
-            'parent_id': uuid.uuid4().hex,
+            'parent_id': parent_project['id'],
             'is_domain': True,
         }
         self.driver.create_project(project_id, project)
@@ -1741,7 +2063,7 @@ class ResourceDriverTests(object):
 
     def test_create_project_same_name_same_domain_conflict(self):
         name = uuid.uuid4().hex
-        domain_id = uuid.uuid4().hex
+        domain_id = default_fixtures.ROOT_DOMAIN['id']
 
         project_id = uuid.uuid4().hex
         project = {
@@ -1766,14 +2088,14 @@ class ResourceDriverTests(object):
         project = {
             'name': uuid.uuid4().hex,
             'id': project_id,
-            'domain_id': uuid.uuid4().hex,
+            'domain_id': default_fixtures.ROOT_DOMAIN['id'],
         }
         self.driver.create_project(project_id, project)
 
         project = {
             'name': uuid.uuid4().hex,
             'id': project_id,
-            'domain_id': uuid.uuid4().hex,
+            'domain_id': default_fixtures.ROOT_DOMAIN['id'],
         }
         self.assertRaises(exception.Conflict, self.driver.create_project,
                           project_id, project)

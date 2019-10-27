@@ -14,8 +14,6 @@
 
 """Main entry point into the Application Credential service."""
 
-from oslo_log import log
-
 from keystone.common import cache
 from keystone.common import driver_hints
 from keystone.common import manager
@@ -27,7 +25,6 @@ from keystone import notifications
 
 CONF = keystone.conf.CONF
 MEMOIZE = cache.get_memoization_decorator(group='application_credential')
-LOG = log.getLogger(__name__)
 PROVIDERS = provider_api.ProviderAPIs
 
 
@@ -43,6 +40,7 @@ class Manager(manager.Manager):
     _provides_api = 'application_credential_api'
 
     _APP_CRED = 'application_credential'
+    _ACCESS_RULE = 'access_rule'
 
     def __init__(self):
         super(Manager, self).__init__(CONF.application_credential.driver)
@@ -64,6 +62,7 @@ class Manager(manager.Manager):
             self, service, resource_type, operation, payload):
         user_id = payload['resource_info']
         self._delete_application_credentials_for_user(user_id)
+        self._delete_access_rules_for_user(user_id)
 
     def _delete_app_creds_on_assignment_removal(
             self, service, resource_type, operation, payload):
@@ -82,9 +81,7 @@ class Manager(manager.Manager):
     def _require_user_has_role_in_project(self, roles, user_id, project_id):
         user_roles = self._get_user_roles(user_id, project_id)
         for role in roles:
-            matching_roles = [x for x in user_roles
-                              if x == role['id']]
-            if not matching_roles:
+            if role['id'] not in user_roles:
                 raise exception.RoleAssignmentNotFound(role_id=role['id'],
                                                        actor_id=user_id,
                                                        target_id=project_id)
@@ -103,7 +100,7 @@ class Manager(manager.Manager):
             roles.append(PROVIDERS.role_api.get_role(role['id']))
         return roles
 
-    def authenticate(self, request, application_credential_id, secret):
+    def authenticate(self, application_credential_id, secret):
         """Authenticate with an application credential.
 
         :param str application_credential_id: Application Credential ID
@@ -132,12 +129,13 @@ class Manager(manager.Manager):
         user_id = application_credential['user_id']
         project_id = application_credential['project_id']
         roles = application_credential.pop('roles', [])
+        access_rules = application_credential.pop('access_rules', None)
 
         self._assert_limit_not_exceeded(user_id)
         self._require_user_has_role_in_project(roles, user_id, project_id)
         unhashed_secret = application_credential['secret']
         ref = self.driver.create_application_credential(
-            application_credential, roles)
+            application_credential, roles, access_rules)
         ref['secret'] = unhashed_secret
         ref = self._process_app_cred(ref)
         notifications.Audit.created(
@@ -171,6 +169,26 @@ class Manager(manager.Manager):
             user_id, hints)
         return [self._process_app_cred(app_cred) for app_cred in app_cred_list]
 
+    @MEMOIZE
+    def get_access_rule(self, access_rule_id):
+        """Get access rule details.
+
+        :param str access_rule_id: Access Rule ID
+
+        :returns: an access rule
+        """
+        return self.driver.get_access_rule(access_rule_id)
+
+    def list_access_rules_for_user(self, user_id, hints=None):
+        """List access rules for user.
+
+        :param str user_id: User ID
+
+        :returns: a list of access rules
+        """
+        hints = hints or driver_hints.Hints()
+        return self.driver.list_access_rules_for_user(user_id, hints)
+
     def delete_application_credential(self, application_credential_id,
                                       initiator=None):
         """Delete an application credential.
@@ -181,13 +199,14 @@ class Manager(manager.Manager):
         :raises keystone.exception.ApplicationCredentialNotFound: If the
             application credential doesn't exist.
         """
+        self.driver.delete_application_credential(application_credential_id)
         self.get_application_credential.invalidate(self,
                                                    application_credential_id)
-        self.driver.delete_application_credential(application_credential_id)
         notifications.Audit.deleted(
             self._APP_CRED, application_credential_id, initiator)
 
-    def _delete_application_credentials_for_user(self, user_id):
+    def _delete_application_credentials_for_user(self, user_id,
+                                                 initiator=None):
         """Delete all application credentials for a user.
 
         :param str user_id: User ID
@@ -199,6 +218,8 @@ class Manager(manager.Manager):
         self.driver.delete_application_credentials_for_user(user_id)
         for app_cred in app_creds:
             self.get_application_credential.invalidate(self, app_cred['id'])
+            notifications.Audit.deleted(self._APP_CRED, app_cred['id'],
+                                        initiator)
 
     def _delete_application_credentials_for_user_on_project(self, user_id,
                                                             project_id):
@@ -218,3 +239,32 @@ class Manager(manager.Manager):
             user_id, project_id)
         for app_cred in app_creds:
             self.get_application_credential.invalidate(self, app_cred['id'])
+
+    def delete_access_rule(self, access_rule_id, initiator=None):
+        """Delete an access rule.
+
+        :param str: access_rule_id: Access Rule ID
+        :param initiator: CADF initiator
+
+        :raises keystone.exception.AccessRuleNotFound: If the access rule
+            doesn't exist.
+        """
+        self.driver.delete_access_rule(access_rule_id)
+        self.get_access_rule.invalidate(self, access_rule_id)
+        notifications.Audit.deleted(
+            self._ACCESS_RULE, access_rule_id, initiator)
+
+    def _delete_access_rules_for_user(self, user_id, initiator=None):
+        """Delete all access rules for a user.
+
+        :param str user_id: User ID
+
+        This is triggered when a user is deleted.
+        """
+        access_rules = self.driver.list_access_rules_for_user(
+            user_id, driver_hints.Hints())
+        self.driver.delete_access_rules_for_user(user_id)
+        for rule in access_rules:
+            self.get_access_rule.invalidate(self, rule['id'])
+            notifications.Audit.deleted(self._ACCESS_RULE, rule['id'],
+                                        initiator)

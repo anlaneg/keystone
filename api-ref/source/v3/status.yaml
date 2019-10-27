@@ -27,6 +27,14 @@
 401:
   default: |
     User must authenticate before making a request.
+  auth_failed: |
+    Authentication attempt has failed.
+  auth_receipt: |
+    User has successfully supplied some auth methods, but not enough for full
+    authentication.
+  auth_receipt_failure: |
+    Authentication attempt has failed. Either the auth receipt has expired, or
+    the additional auth methods supplied were invalid.
 403:
   default: |
     Policy does not allow current user to do this operation.
@@ -42,6 +50,9 @@
 409:
   default: |
     This operation conflicted with another operation on this resource.
+410:
+  default: |
+    The access request to the target resource is no longer available.
 413:
   default: |
     The request is larger than the server is willing or able to process.

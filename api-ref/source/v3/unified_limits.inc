@@ -48,6 +48,7 @@ Parameters
    - region_id: region_id_response_body
    - resource_name: resource_name
    - default_limit: default_limit
+   - description: description_registered_limit_response_body
    - links: link_response_body
 
 
@@ -93,6 +94,7 @@ Parameters
    - region_id: region_id_request_body
    - resource_name: resource_name
    - default_limit: default_limit
+   - description: description_registered_limit_request_body
 
 Examples
 ~~~~~~~~
@@ -116,6 +118,7 @@ Parameters
    - region_id: region_id_response_body
    - resource_name: resource_name
    - default_limit: default_limit
+   - description: description_registered_limit_response_body
    - links: link_response_body
 
 Status Codes
@@ -143,12 +146,11 @@ Examples
 Update Registered Limits
 ========================
 
-.. rest_method::  PUT /v3/registered_limits
+.. rest_method::  PATCH /v3/registered_limits/{registered_limit_id}
 
-Updates registered limits. It supports to update more than one registered limit
-in one request.
+Updates the specified registered limit.
 
-Relationship: ``https://docs.openstack.org/api/openstack-identity/3/rel/registered_limits``
+Relationship: ``https://docs.openstack.org/api/openstack-identity/3/rel/registered_limit``
 
 Request
 -------
@@ -158,12 +160,13 @@ Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - registered_limits: registered_limits
-   - id: registered_limit_id
-   - service_id: service_id_registered_limit
-   - region_id: region_id_request_body
-   - resource_name: resource_name
-   - default_limit: default_limit
+   - registered_limit_id: registered_limit_id_path
+   - registered_limit: registered_limit
+   - service_id: request_service_id_registered_limit_body_not_required
+   - region_id: request_region_id_registered_limit_body_not_required
+   - resource_name: request_resource_name_body_not_required
+   - default_limit: request_default_limit_body_not_required
+   - description: description_registered_limit_request_body
 
 Example
 ~~~~~~~
@@ -179,12 +182,13 @@ Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - registered_limits: registered_limits
+   - registered_limit: registered_limit
    - id: registered_limit_id
    - service_id: service_id_registered_limit
    - region_id: region_id_response_body
    - resource_name: resource_name
    - default_limit: default_limit
+   - description: description_registered_limit_response_body
    - links: link_response_body
 
 
@@ -243,6 +247,7 @@ Parameters
    - region_id: region_id_response_body
    - resource_name: resource_name
    - default_limit: default_limit
+   - description: description_registered_limit_response_body
    - links: link_response_body
 
 Status Codes
@@ -301,6 +306,46 @@ Status Codes
    - 404
 
 
+Get Enforcement Model
+=====================
+
+.. rest_method::  GET /v3/limits/model
+
+Return the configured limit enforcement model.
+
+Relationship: ``https://docs.openstack.org/api/openstack-identity/3/rel/limit_model``
+
+Response
+--------
+
+Parameters
+~~~~~~~~~~
+
+.. rest_parameters:: parameters.yaml
+
+   - model: limit_model_required_response_body
+   - name: limit_model_name_required_response_body
+   - description: limit_model_description_required_response_body
+
+Status Codes
+~~~~~~~~~~~~
+
+.. rest_status_code:: success status.yaml
+
+   - 200
+
+.. rest_status_code:: error status.yaml
+
+   - 401
+   - 403
+
+Flat Enforcement Example
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. literalinclude:: ./samples/admin/limit-flat-model-response.json
+   :language: javascript
+
+
 List Limits
 ===========
 
@@ -321,6 +366,8 @@ Parameters
    - service_id: service_id_query
    - region_id: region_id_query
    - resource_name: resource_name_query
+   - project_id: scope_project_id_query
+   - domain_id: scope_domain_id_query
 
 
 Response
@@ -335,10 +382,12 @@ Parameters
    - limits: limits
    - id: limit_id
    - project_id: project_id
+   - domain_id: response_limit_domain_id_body
    - service_id: service_id_limit
    - region_id: region_id_response_body
    - resource_name: resource_name
    - resource_limit: resource_limit
+   - description: description_limit_response_body
    - links: link_response_body
 
 
@@ -379,10 +428,13 @@ Parameters
 .. rest_parameters:: parameters.yaml
 
    - limits: limits
+   - project_id: request_limit_project_id_not_required
+   - domain_id: request_limit_domain_id_not_required
    - service_id: service_id_limit
    - region_id: region_id_request_body
    - resource_name: resource_name
    - resource_limit: resource_limit
+   - description: description_limit_request_body
 
 Examples
 ~~~~~~~~
@@ -402,10 +454,13 @@ Parameters
 
    - limits: limits
    - id: limit_id
+   - project_id: project_id
+   - domain_id: response_limit_domain_id_body
    - service_id: service_id_limit
    - region_id: region_id_response_body
    - resource_name: resource_name
    - resource_limit: resource_limit
+   - description: description_limit_response_body
    - links: link_response_body
 
 Status Codes
@@ -433,13 +488,12 @@ Examples
 Update Limits
 =============
 
-.. rest_method::  PUT /v3/limits
+.. rest_method::  PATCH /v3/limits/{limit_id}
 
-Updates limits. It supports to update more than one limit in one request. It
-only supports to update ``resource_limit`` for limits. It will return all the
-limits for the project.
+Updates the specified limit. It only supports to update ``resource_limit`` or
+``description`` for the limit.
 
-Relationship: ``https://docs.openstack.org/api/openstack-identity/3/rel/limits``
+Relationship: ``https://docs.openstack.org/api/openstack-identity/3/rel/limit``
 
 Request
 -------
@@ -449,8 +503,10 @@ Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - limits: limits
-   - resource_limit: resource_limit
+   - limit_id: limit_id_path
+   - limit: limit
+   - resource_limit: request_resource_limit_body_not_required
+   - description: description_limit_request_body
 
 Example
 ~~~~~~~
@@ -466,12 +522,15 @@ Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - limits: limits
+   - limit: limit
    - id: limit_id
+   - project_id: project_id
+   - domain_id: response_limit_domain_id_body
    - service_id: service_id_limit
    - region_id: region_id_response_body
    - resource_name: resource_name
    - resource_limit: resource_limit
+   - description: description_limit_response_body
    - links: link_response_body
 
 
@@ -524,13 +583,15 @@ Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - limits: limits
+   - limit: limit
    - id: limit_id
    - project_id: project_id
+   - domain_id: response_limit_domain_id_body
    - service_id: service_id_limit
    - region_id: region_id_response_body
    - resource_name: resource_name
    - resource_limit: resource_limit
+   - description: description_limit_response_body
    - links: link_response_body
 
 Status Codes

@@ -20,10 +20,12 @@ import freezegun
 import mock
 from oslo_config import fixture as config_fixture
 from oslo_log import log
+import oslo_messaging
 from pycadf import cadftaxonomy
 from pycadf import cadftype
 from pycadf import eventfactory
 from pycadf import resource as cadfresource
+from six.moves import http_client
 
 from keystone.common import provider_api
 import keystone.conf
@@ -117,6 +119,13 @@ class AuditNotificationsTestCase(unit.BaseTestCase):
 
 class NotificationsTestCase(unit.BaseTestCase):
 
+    def setUp(self):
+        super(NotificationsTestCase, self).setUp()
+        self.config_fixture = self.useFixture(config_fixture.Config(CONF))
+        self.config_fixture.config(
+            group='oslo_messaging_notifications', transport_url='rabbit://'
+        )
+
     def test_send_notification(self):
         """Test _send_notification.
 
@@ -141,12 +150,11 @@ class NotificationsTestCase(unit.BaseTestCase):
         expected_args = [
             {},  # empty context
             'identity.%s.created' % resource_type,  # event_type
-            {'resource_info': resource},  # payload
-            'INFO',  # priority is always INFO...
+            {'resource_info': resource}  # payload
         ]
 
         with mock.patch.object(notifications._get_notifier(),
-                               '_notify') as mocked:
+                               'info') as mocked:
             notifications._send_notification(operation, resource_type,
                                              resource)
             mocked.assert_called_once_with(*expected_args)
@@ -170,7 +178,7 @@ class NotificationsTestCase(unit.BaseTestCase):
         conf.config(notification_opt_out=[event_type])
 
         with mock.patch.object(notifications._get_notifier(),
-                               '_notify') as mocked:
+                               'info') as mocked:
 
             notifications._send_notification(operation, resource_type,
                                              resource)
@@ -194,7 +202,7 @@ class NotificationsTestCase(unit.BaseTestCase):
         conf.config(notification_opt_out=[event_type])
 
         with mock.patch.object(notifications._get_notifier(),
-                               '_notify') as mocked:
+                               'info') as mocked:
 
             notifications._send_audit_notification(action,
                                                    initiator,
@@ -218,7 +226,7 @@ class NotificationsTestCase(unit.BaseTestCase):
         conf.config(notification_opt_out=[meter_name])
 
         with mock.patch.object(notifications._get_notifier(),
-                               '_notify') as mocked:
+                               'info') as mocked:
 
             notifications._send_audit_notification(action,
                                                    initiator,
@@ -236,12 +244,13 @@ class BaseNotificationTest(test_v3.RestfulTestCase):
         self._notifications = []
         self._audits = []
 
-        def fake_notify(operation, resource_type, resource_id,
+        def fake_notify(operation, resource_type, resource_id, initiator=None,
                         actor_dict=None, public=True):
             note = {
                 'resource_id': resource_id,
                 'operation': operation,
                 'resource_type': resource_type,
+                'initiator': initiator,
                 'send_notification_called': True,
                 'public': public}
             if actor_dict:
@@ -332,6 +341,7 @@ class BaseNotificationTest(test_v3.RestfulTestCase):
         self.assertEqual(self.user_id, payload['initiator']['id'])
         self.assertEqual(self.project_id, payload['initiator']['project_id'])
         self.assertEqual(typeURI, payload['target']['typeURI'])
+        self.assertIn('request_id', payload['initiator'])
         action = '%s.%s' % (operation, resource_type)
         self.assertEqual(action, payload['action'])
 
@@ -355,7 +365,8 @@ class BaseNotificationTest(test_v3.RestfulTestCase):
             'send_notification_called': True,
             'public': public}
         for note in self._notifications:
-            if expected == note:
+            # compare only expected fields
+            if all(note.get(k) == v for k, v in expected.items()):
                 break
         else:
             self.fail("Notification not sent.")
@@ -708,6 +719,30 @@ class NotificationsForEntities(BaseNotificationTest):
                                actor_id=user_ref['id'], actor_type='user',
                                actor_operation='removed')
 
+    def test_initiator_request_id(self):
+        ref = unit.new_domain_ref()
+        self.post('/domains', body={'domain': ref})
+        note = self._notifications[-1]
+        initiator = note['initiator']
+        self.assertIsNotNone(initiator.request_id)
+
+    def test_initiator_global_request_id(self):
+        global_request_id = 'req-%s' % uuid.uuid4()
+        ref = unit.new_domain_ref()
+        self.post('/domains', body={'domain': ref},
+                  headers={'X-OpenStack-Request-Id': global_request_id})
+        note = self._notifications[-1]
+        initiator = note['initiator']
+        self.assertEqual(
+            initiator.global_request_id, global_request_id)
+
+    def test_initiator_global_request_id_not_set(self):
+        ref = unit.new_domain_ref()
+        self.post('/domains', body={'domain': ref})
+        note = self._notifications[-1]
+        initiator = note['initiator']
+        self.assertFalse(hasattr(initiator, 'global_request_id'))
+
 
 class CADFNotificationsForPCIDSSEvents(BaseNotificationTest):
 
@@ -746,20 +781,19 @@ class CADFNotificationsForPCIDSSEvents(BaseNotificationTest):
         user_ref = unit.new_user_ref(domain_id=self.domain_id,
                                      password=password)
         user_ref = PROVIDERS.identity_api.create_user(user_ref)
-        PROVIDERS.identity_api.authenticate(
-            self.make_request(), user_ref['id'], password
-        )
+        with self.make_request():
+            PROVIDERS.identity_api.authenticate(user_ref['id'], password)
         freezer.stop()
 
         reason_type = (exception.PasswordExpired.message_format %
                        {'user_id': user_ref['id']})
         expected_reason = {'reasonCode': '401',
                            'reasonType': reason_type}
-        self.assertRaises(exception.PasswordExpired,
-                          PROVIDERS.identity_api.authenticate,
-                          self.make_request(),
-                          user_id=user_ref['id'],
-                          password=password)
+        with self.make_request():
+            self.assertRaises(exception.PasswordExpired,
+                              PROVIDERS.identity_api.authenticate,
+                              user_id=user_ref['id'],
+                              password=password)
         self._assert_last_audit(None, 'authenticate', None,
                                 cadftaxonomy.ACCOUNT_USER,
                                 reason=expected_reason)
@@ -777,12 +811,12 @@ class CADFNotificationsForPCIDSSEvents(BaseNotificationTest):
         expected_reason = {'reasonCode': '401',
                            'reasonType': reason_type}
         for ex in expected_responses:
-            self.assertRaises(ex,
-                              PROVIDERS.identity_api.change_password,
-                              self.make_request(),
-                              user_id=user_ref['id'],
-                              original_password=new_password,
-                              new_password=new_password)
+            with self.make_request():
+                self.assertRaises(ex,
+                                  PROVIDERS.identity_api.change_password,
+                                  user_id=user_ref['id'],
+                                  original_password=new_password,
+                                  new_password=new_password)
 
         self._assert_last_audit(None, 'authenticate', None,
                                 cadftaxonomy.ACCOUNT_USER,
@@ -802,16 +836,17 @@ class CADFNotificationsForPCIDSSEvents(BaseNotificationTest):
         user_ref = unit.new_user_ref(domain_id=self.domain_id,
                                      password=password)
         user_ref = PROVIDERS.identity_api.create_user(user_ref)
-        PROVIDERS.identity_api.change_password(
-            self.make_request(), user_id=user_ref['id'],
-            original_password=password, new_password=new_password
-        )
-        self.assertRaises(exception.PasswordValidationError,
-                          PROVIDERS.identity_api.change_password,
-                          self.make_request(),
-                          user_id=user_ref['id'],
-                          original_password=new_password,
-                          new_password=password)
+        with self.make_request():
+            PROVIDERS.identity_api.change_password(
+                user_id=user_ref['id'],
+                original_password=password, new_password=new_password
+            )
+        with self.make_request():
+            self.assertRaises(exception.PasswordValidationError,
+                              PROVIDERS.identity_api.change_password,
+                              user_id=user_ref['id'],
+                              original_password=new_password,
+                              new_password=password)
 
         self._assert_last_audit(user_ref['id'], UPDATED_OPERATION, 'user',
                                 cadftaxonomy.SECURITY_ACCOUNT_USER,
@@ -829,12 +864,12 @@ class CADFNotificationsForPCIDSSEvents(BaseNotificationTest):
         user_ref = unit.new_user_ref(domain_id=self.domain_id,
                                      password=password)
         user_ref = PROVIDERS.identity_api.create_user(user_ref)
-        self.assertRaises(exception.PasswordValidationError,
-                          PROVIDERS.identity_api.change_password,
-                          self.make_request(),
-                          user_id=user_ref['id'],
-                          original_password=password,
-                          new_password=invalid_password)
+        with self.make_request():
+            self.assertRaises(exception.PasswordValidationError,
+                              PROVIDERS.identity_api.change_password,
+                              user_id=user_ref['id'],
+                              original_password=password,
+                              new_password=invalid_password)
 
         self._assert_last_audit(user_ref['id'], UPDATED_OPERATION, 'user',
                                 cadftaxonomy.SECURITY_ACCOUNT_USER,
@@ -859,16 +894,17 @@ class CADFNotificationsForPCIDSSEvents(BaseNotificationTest):
                        {'min_age_days': min_days, 'days_left': days_left})
         expected_reason = {'reasonCode': '400',
                            'reasonType': reason_type}
-        PROVIDERS.identity_api.change_password(
-            self.make_request(), user_id=user_ref['id'],
-            original_password=password, new_password=new_password
-        )
-        self.assertRaises(exception.PasswordValidationError,
-                          PROVIDERS.identity_api.change_password,
-                          self.make_request(),
-                          user_id=user_ref['id'],
-                          original_password=new_password,
-                          new_password=next_password)
+        with self.make_request():
+            PROVIDERS.identity_api.change_password(
+                user_id=user_ref['id'],
+                original_password=password, new_password=new_password
+            )
+        with self.make_request():
+            self.assertRaises(exception.PasswordValidationError,
+                              PROVIDERS.identity_api.change_password,
+                              user_id=user_ref['id'],
+                              original_password=new_password,
+                              new_password=next_password)
 
         self._assert_last_audit(user_ref['id'], UPDATED_OPERATION, 'user',
                                 cadftaxonomy.SECURITY_ACCOUNT_USER,
@@ -890,6 +926,37 @@ class CADFNotificationsForEntities(NotificationsForEntities):
         self._assert_initiator_data_is_set(CREATED_OPERATION,
                                            'domain',
                                            cadftaxonomy.SECURITY_DOMAIN)
+
+    def test_initiator_request_id(self):
+        data = self.build_authentication_request(
+            user_id=self.user_id,
+            password=self.user['password'])
+        self.post('/auth/tokens', body=data)
+        audit = self._audits[-1]
+        initiator = audit['payload']['initiator']
+        self.assertIn('request_id', initiator)
+
+    def test_initiator_global_request_id(self):
+        global_request_id = 'req-%s' % uuid.uuid4()
+        data = self.build_authentication_request(
+            user_id=self.user_id,
+            password=self.user['password'])
+        self.post(
+            '/auth/tokens', body=data,
+            headers={'X-OpenStack-Request-Id': global_request_id})
+        audit = self._audits[-1]
+        initiator = audit['payload']['initiator']
+        self.assertEqual(
+            initiator['global_request_id'], global_request_id)
+
+    def test_initiator_global_request_id_not_set(self):
+        data = self.build_authentication_request(
+            user_id=self.user_id,
+            password=self.user['password'])
+        self.post('/auth/tokens', body=data)
+        audit = self._audits[-1]
+        initiator = audit['payload']['initiator']
+        self.assertNotIn('global_request_id', initiator)
 
 
 class TestEventCallbacks(test_v3.RestfulTestCase):
@@ -1060,6 +1127,10 @@ class CadfNotificationsWrapperTestCase(test_v3.RestfulTestCase):
         self.useFixture(fixtures.MockPatchObject(
             notifications, '_send_audit_notification', fake_notify))
 
+    def _get_last_note(self):
+        self.assertTrue(self._notifications)
+        return self._notifications[-1]
+
     def _assert_last_note(self, action, user_id, event_type=None):
         self.assertTrue(self._notifications)
         note = self._notifications[-1]
@@ -1119,6 +1190,18 @@ class CadfNotificationsWrapperTestCase(test_v3.RestfulTestCase):
         self.assertEqual(role_id, event.role)
         self.assertEqual(inherit, event.inherited_to_projects)
 
+    def test_initiator_id_always_matches_user_id(self):
+        # Clear notifications
+        while self._notifications:
+            self._notifications.pop()
+
+        self.get_scoped_token()
+        self.assertEqual(len(self._notifications), 1)
+        note = self._notifications.pop()
+        initiator = note['initiator']
+        self.assertEqual(self.user_id, initiator.id)
+        self.assertEqual(self.user_id, initiator.user_id)
+
     def test_v3_authenticate_user_name_and_domain_id(self):
         user_id = self.user_id
         user_name = self.user['name']
@@ -1137,6 +1220,43 @@ class CadfNotificationsWrapperTestCase(test_v3.RestfulTestCase):
                                                  password=password)
         self.post('/auth/tokens', body=data)
         self._assert_last_note(self.ACTION, user_id)
+
+    def test_v3_authenticate_with_invalid_user_id_sends_notification(self):
+        user_id = uuid.uuid4().hex
+        password = self.user['password']
+        data = self.build_authentication_request(user_id=user_id,
+                                                 password=password)
+        self.post('/auth/tokens', body=data,
+                  expected_status=http_client.UNAUTHORIZED)
+        note = self._get_last_note()
+        initiator = note['initiator']
+
+        # Confirm user-name specific event was emitted.
+        self.assertEqual(self.ACTION, note['action'])
+        self.assertEqual(user_id, initiator.user_id)
+        self.assertTrue(note['send_notification_called'])
+        self.assertEqual(cadftaxonomy.OUTCOME_FAILURE, note['event'].outcome)
+        self.assertEqual(self.LOCAL_HOST, initiator.host.address)
+
+    def test_v3_authenticate_with_invalid_user_name_sends_notification(self):
+        user_name = uuid.uuid4().hex
+        password = self.user['password']
+        domain_id = self.domain_id
+        data = self.build_authentication_request(username=user_name,
+                                                 user_domain_id=domain_id,
+                                                 password=password)
+        self.post('/auth/tokens', body=data,
+                  expected_status=http_client.UNAUTHORIZED)
+        note = self._get_last_note()
+        initiator = note['initiator']
+
+        # Confirm user-name specific event was emitted.
+        self.assertEqual(self.ACTION, note['action'])
+        self.assertEqual(user_name, initiator.user_name)
+        self.assertEqual(domain_id, initiator.domain_id)
+        self.assertTrue(note['send_notification_called'])
+        self.assertEqual(cadftaxonomy.OUTCOME_FAILURE, note['event'].outcome)
+        self.assertEqual(self.LOCAL_HOST, initiator.host.address)
 
     def test_v3_authenticate_user_name_and_domain_name(self):
         user_id = self.user_id
@@ -1188,17 +1308,17 @@ class CadfNotificationsWrapperTestCase(test_v3.RestfulTestCase):
         project_ref = unit.new_project_ref(self.domain_id)
         project = PROVIDERS.resource_api.create_project(
             project_ref['id'], project_ref)
-        tenant_id = project['id']
+        project_id = project['id']
 
         PROVIDERS.assignment_api.add_role_to_user_and_project(
-            self.user_id, tenant_id, self.role_id)
+            self.user_id, project_id, self.role_id)
 
         self.assertTrue(self._notifications)
         note = self._notifications[-1]
         self.assertEqual('created.role_assignment', note['action'])
         self.assertTrue(note['send_notification_called'])
 
-        self._assert_event(self.role_id, project=tenant_id, user=self.user_id)
+        self._assert_event(self.role_id, project=project_id, user=self.user_id)
 
     def test_remove_role_from_user_and_project(self):
         # A notification is sent when remove_role_from_user_and_project is
@@ -1313,8 +1433,27 @@ class TestCallbackRegistration(unit.BaseTestCase):
 
 class CADFNotificationsDataTestCase(test_v3.RestfulTestCase):
 
-    def test_receive_identityId_from_audit_notification(self):
+    def config_overrides(self):
+        super(CADFNotificationsDataTestCase, self).config_overrides()
+        # NOTE(lbragstad): This is a workaround since oslo.messaging version
+        # 9.0.0 had a broken default for transport_url. This makes it so that
+        # we are able to use version 9.0.0 in tests because we are supplying
+        # an override to use a sane default (rabbit://). The problem is that
+        # we can't update the config fixture until we call
+        # get_notification_transport since that method registers the
+        # configuration options for oslo.messaging, which fails since there
+        # isn't a default value for transport_url with version 9.0.0. All the
+        # next line is doing is bypassing the broken default logic by supplying
+        # a dummy url, which allows the options to be registered. After that,
+        # we can actually update the configuration option to override the
+        # transport_url option that was just registered before proceeding with
+        # the test.
+        oslo_messaging.get_notification_transport(CONF, url='rabbit://')
+        self.config_fixture.config(
+            group='oslo_messaging_notifications', transport_url='rabbit://'
+        )
 
+    def test_receive_identityId_from_audit_notification(self):
         observer = None
         resource_type = EXP_RESOURCE_TYPE
 
@@ -1329,7 +1468,7 @@ class CADFNotificationsDataTestCase(test_v3.RestfulTestCase):
         event_type = 'identity.authenticate.created'
 
         with mock.patch.object(notifications._get_notifier(),
-                               '_notify') as mocked:
+                               'info') as mocked:
 
             notifications._send_audit_notification(action,
                                                    initiator,

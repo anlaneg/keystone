@@ -6,6 +6,13 @@ Identity service, code-named keystone, on the controller node. For
 scalability purposes, this configuration deploys Fernet tokens and
 the Apache HTTP server to handle requests.
 
+.. note::
+
+   Ensure that you have completed the prerequisite installation steps in the
+   `Openstack Install Guide
+   <https://docs.openstack.org/install-guide/environment-packages-ubuntu.html#finalize-the-installation>`_
+   before proceeding.
+
 Prerequisites
 -------------
 
@@ -63,7 +70,7 @@ Install and configure components
 
    .. code-block:: console
 
-      # apt install keystone  apache2 libapache2-mod-wsgi
+      # apt install keystone
 
    .. end
 
@@ -109,6 +116,13 @@ Install and configure components
 
 4. Initialize Fernet key repositories:
 
+   .. note::
+
+      The ``--keystone-user`` and ``--keystone-group`` flags are used to specify the
+      operating system's user/group that will be used to run keystone. These are provided
+      to allow running keystone under another operating system user/group. In the example
+      below, we call the user & group ``keystone``.
+
    .. code-block:: console
 
       # keystone-manage fernet_setup --keystone-user keystone --keystone-group keystone
@@ -117,6 +131,13 @@ Install and configure components
    .. end
 
 5. Bootstrap the Identity service:
+
+   .. note::
+
+      Before the Queens release, keystone needed to be run on two separate ports to
+      accommodate the Identity v2 API which ran a separate admin-only service
+      commonly on port 35357. With the removal of the v2 API, keystone can be run
+      on the same port for all interfaces.
 
    .. code-block:: console
 
@@ -129,6 +150,8 @@ Install and configure components
    .. end
 
    Replace ``ADMIN_PASS`` with a suitable password for an administrative user.
+
+.. _ubuntu_configure_apache:
 
 Configure the Apache HTTP server
 --------------------------------
@@ -143,6 +166,14 @@ Configure the Apache HTTP server
 
    .. end
 
+   The ``ServerName`` entry will need to be added if it does not already exist.
+
+SSL
+^^^
+
+A secure deployment should have the web server configured to use SSL or running
+behind an SSL terminator.
+
 Finalize the installation
 -------------------------
 
@@ -154,7 +185,7 @@ Finalize the installation
 
    .. end
 
-2. Configure the administrative account
+2. Configure the administrative account by setting the proper environmental variables:
 
    .. code-block:: console
 
@@ -167,6 +198,8 @@ Finalize the installation
       $ export OS_IDENTITY_API_VERSION=3
 
    .. end
+
+   These values shown here are the default ones created from ``keystone-manage bootstrap``.
 
    Replace ``ADMIN_PASS`` with the password used in the
    ``keystone-manage bootstrap`` command in `keystone-install-configure-ubuntu`_.
